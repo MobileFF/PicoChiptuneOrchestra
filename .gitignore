@@ -1,0 +1,15 @@
+# Build output
+/build/
+build-*/
+
+# Offline-analysis third-party code — LGPL, host-only, never shipped.
+# Keep this OUT of any public GitHub push (see tools/offline_render/vendor/README.md).
+tools/offline_render/vendor/
+
+# Generated analysis artifacts
+tools/offline_render/*.wav
+
+# Working scratch space: ripped commercial-game VGMs, reference/rendered WAVs,
+# bring-up logs. Not this project's own work and never intended for the
+# public repo — see the copyright discussion in this session.
+調査用/
