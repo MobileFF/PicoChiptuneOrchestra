@@ -66,6 +66,25 @@ void slave_audio_engine_run(const chip_ops_t *ops, uint audio_pin, const char *c
             uint8_t opcode = (uint8_t)(event >> 16);
             uint8_t reg = (uint8_t)(event >> 8);
             uint8_t data = (uint8_t)event;
+            // FIX (2026-09-05): every opcode except NOP/MUTE means this chip
+            // is being actively driven for the song now playing -- clear a
+            // stale mute from the PREVIOUS song before the switch below.
+            // Without this, the only way out of MUTE was a successfully
+            // received VGMSPI_OP_RESET; RESET is a one-shot 3x-redundant
+            // burst at song start (slave_bus.c), and on the rare occasion
+            // ALL THREE are lost to an SPI hiccup, nothing else ever clears
+            // `muted` -- register writes keep landing (this slave's own
+            // ops->write() below runs fine, so the emulated chip's state is
+            // correct) but audio_pwm_write() at the bottom of this loop
+            // stays forced to 0 for the rest of that song. Reported as a VGM
+            // that "plays" (per the master's log) but produces no sound at
+            // all, non-deterministically -- the same file can hit this or
+            // not depending on SPI timing, not on anything in the file
+            // itself. VGMSPI_OP_CLOCK (sent once/song-second to 5 of the 8
+            // chips to fix a missed RESET's pacing) never touched `muted`,
+            // and the other 3 chips get no periodic message at all, so
+            // neither had any self-recovery before this fix.
+            if (opcode != VGMSPI_OP_NOP && opcode != VGMSPI_OP_MUTE) muted = false;
             switch (opcode) {
                 case VGMSPI_OP_RESET:
                     ops->reset(reg);
