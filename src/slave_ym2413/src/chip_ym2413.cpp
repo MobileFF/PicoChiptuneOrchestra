@@ -54,6 +54,8 @@ extern "C" int16_t ym2413_render(void) {
     // fine on sparse single-note passages -- consistent with this). Changed
     // to >>4, matching slave_ym2203's shift (the other many-channel FM chip
     // here): 21000>>4 ~= 1310, safely under the clamp with headroom to spare.
+    // Confirmed on real hardware (2026-09-05): clipping gone, no report of
+    // it now sounding too quiet against the other chips.
     // Quieter overall than before by construction -- if this now sounds too
     // quiet next to the other chips in the analog mix, re-tune per
     // docs/circuit.md's mixing resistors rather than un-doing this shift.
