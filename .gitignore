@@ -2,6 +2,10 @@
 /build/
 build-*/
 
+# Python bytecode cache (tools/config_gui/ etc.)
+__pycache__/
+*.pyc
+
 # Offline-analysis third-party code — LGPL, host-only, never shipped.
 # Keep this OUT of any public GitHub push (see tools/offline_render/vendor/README.md).
 tools/offline_render/vendor/
