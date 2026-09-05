@@ -219,10 +219,23 @@ static uint32_t rd_u32le(const uint8_t *p) {
 // header up to offset 0x3F." Concretely this is what made "04 - Water.vgm"
 // (MD, no YM2203) light up YM2203 on the OLED: its first two YM2612 register
 // writes (0x52 0x28 0x00 0x52 ...) sit at 0x44, the YM2203-clock slot.
-// Returns 0 for an absent/out-of-header field; masks off the dual-chip flag.
+// Returns 0 for an absent/out-of-header field, or one whose value is outside
+// any real chip's crystal range (masks off the dual-chip flag first, then
+// checks). This second guard is separate from the data_start one above: some
+// VGM converters pad the header out to a later spec version's length without
+// zeroing every extended field they don't populate (seen with AY-3-8910 @
+// 0x74 and K051649/SCC @ 0x9C on real-world YM2413 rips), leaving leftover
+// garbage that data_start alone can't catch since it genuinely sits inside
+// the declared header. Every clock this project's slaves use is 0.5-8 MHz;
+// 1 kHz-100 MHz is a generous margin that should never reject a real value
+// while catching garbage (reads as "chip present" -> the master's
+// chip-availability skip then silently skips the WHOLE song for a phantom
+// missing chip -- reported as some YM2413 VGMs not playing at all).
 static uint32_t hdr_clock(const uint8_t *header, uint32_t data_start, uint32_t off) {
     if (data_start < off + 4) return 0;
-    return rd_u32le(header + off) & 0x7FFFFFFFu;
+    uint32_t clock = rd_u32le(header + off) & 0x7FFFFFFFu;
+    if (clock < 1000u || clock > 100000000u) return 0;
+    return clock;
 }
 
 // Bitmask of the chips a song uses, read from its (already loaded,

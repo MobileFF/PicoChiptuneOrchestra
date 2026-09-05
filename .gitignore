@@ -6,6 +6,9 @@ build-*/
 __pycache__/
 *.pyc
 
+# Claude Code session-local state (lock files etc.), not project content
+.claude/
+
 # Offline-analysis third-party code — LGPL, host-only, never shipped.
 # Keep this OUT of any public GitHub push (see tools/offline_render/vendor/README.md).
 tools/offline_render/vendor/
