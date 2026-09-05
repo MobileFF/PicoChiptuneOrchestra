@@ -22,6 +22,15 @@ g++ -std=c++17 -O2 -I. ../../../tools/probes/ym2413_probe.cpp \
     ymfm_opl.cpp ymfm_adpcm.cpp ymfm_pcm.cpp -o /tmp/ym2413_probe
 /tmp/ym2413_probe
 
+# ym2413_chord_probe.cpp: same chip, but keys on all 9 melody channels at
+# once (a full chord) instead of one -- used to size chip_ym2413.cpp's final
+# output shift correctly (a single-channel-only measurement badly
+# underestimated the real worst case; see the "FIX (2026-09-05)" comment
+# there).
+g++ -std=c++17 -O2 -I. ../../../tools/probes/ym2413_chord_probe.cpp \
+    ymfm_opl.cpp ymfm_adpcm.cpp ymfm_pcm.cpp -o /tmp/ym2413_chord_probe
+/tmp/ym2413_chord_probe
+
 g++ -std=c++17 -O2 -I. ../../../tools/probes/ym2151_ym2203_probe.cpp \
     ymfm_opm.cpp ymfm_opn.cpp ymfm_adpcm.cpp ymfm_ssg.cpp -o /tmp/ym2151_ym2203_probe
 /tmp/ym2151_ym2203_probe

@@ -7,14 +7,18 @@ ymfmのOPM(YM2151)には精度を落として軽くする設定(YM2203にある`
 
 Pico 2(RP2350)はクロックが高く(標準150MHz)、コア(Cortex-M33)もRP2040のCortex-M0+より
 1命令あたりの処理効率が高いため、この不足を解消できる可能性があります。**ここにあるのは
-YM2151/YM2203/YM2612(design-notes.mdでCPU負荷が高いと指摘していた3チップ)+ Sega PCM
-(2026-08-28、音程等の不具合報告を受けて追加。ただしSega PCMのネイティブレートは約31.25kHzと
-YM2151よりずっと低く、単純なテーブル読み出し中心の処理なので、本当にCPU負荷が原因かは
-`debug/slave_segapcm_VERBOSE.uf2`の`RATE CHECK`で個別に確認してください。CPU起因でなければ
-このPico 2化・オーバークロックだけでは直らず、クロックプリセットやSPIのCS間隔
-(`src/master/src/slave_bus.c`)側を疑う必要があります)を、Pico 2のRP2350向けに再ビルドしたものです**。
-他のチップ(SN76489/AY-3-8910/YM2413/SCC)はRP2040標準クロックで十分間に合っているため、Pico 2版は
-用意していません(`../`にあるRP2040版をそのまま使ってください)。
+YM2151/YM2203/YM2612(design-notes.mdでCPU負荷が高いと指摘していた3チップ)+ YM2413を、
+Pico 2のRP2350向けに再ビルドしたものです**。他のチップ(SN76489/AY-3-8910/SCC/Sega PCM)は
+RP2040標準クロックで十分間に合っているため、Pico 2版は`../pico1/`に用意していません
+(Sega PCMは当初こちらにも念のため置いていましたが、2026-09-05にRP2040標準クロックで
+問題なく鳴ることを実機確認できたため`../pico1/`側が正になりました。このディレクトリの
+`slave_segapcm.uf2`は参考として残しています)。
+
+**YM2413について(2026-09-05追加)**: 上記のFM音源勢CPU負荷調査でYM2413(OPLL)は当初対象外と
+見ていましたが、実機で同じ症状(音程が均一に低く聞こえる)が報告され、Pico 2への書き込み替えの
+みで解消することを確認しました。**他の3チップと違い、追加のオーバークロックは不要**(Pico 2の
+標準150MHzのままで足りる)です。`src/slave_ym2413/src/main.c`は`slave_overclock.h`を呼んで
+いません。YM2151のような`RATE CHECK`での定量測定はまだ取れていません。
 
 ## 書き込み方法
 
@@ -76,7 +80,7 @@ RP2040版と共通):
 ```sh
 export PICO_SDK_PATH=~/pico-sdk
 cmake -S . -B ~/build-vgmplay-pico2 -DPICO_BOARD=pico2
-cmake --build ~/build-vgmplay-pico2 --target slave_ym2151 slave_ym2203 slave_ym2612 slave_segapcm
+cmake --build ~/build-vgmplay-pico2 --target slave_ym2151 slave_ym2203 slave_ym2612 slave_ym2413
 ```
 
 `VGM_SLAVE_VERBOSE_LOG=ON`を追加すれば`debug/`向けのビルドに、

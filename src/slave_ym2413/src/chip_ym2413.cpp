@@ -42,9 +42,22 @@ extern "C" int16_t ym2413_render(void) {
     // Measured range for one loud channel is 0..2560 (see
     // tools/probes/ym2413_probe.cpp) -- the real YM2413's cost-reduced DAC is
     // documented to produce an asymmetric, mostly-unipolar waveform, so this
-    // isn't a bug. >>1 leaves headroom for multiple simultaneous channels;
-    // the clamp below catches any excess.
-    int32_t mono = (int32_t)out.data[0] >> 1;
+    // isn't a bug.
+    //
+    // FIX (2026-09-05): >>1 was not remotely enough headroom despite the
+    // comment's claim. YM2413 has 9 melody channels, and a probe with 9
+    // simultaneous loud channels (tools/probes/ym2413_chord_probe.cpp)
+    // measured a summed peak of ~21000 -- >>1 of that
+    // is ~10500, twelve times over the +-2047 clamp below, i.e. hard clipping
+    // ("音割れ") on any full chord, not just rare fortissimo peaks. Reported
+    // as intermittent distortion on real hardware (worse in fuller chords,
+    // fine on sparse single-note passages -- consistent with this). Changed
+    // to >>4, matching slave_ym2203's shift (the other many-channel FM chip
+    // here): 21000>>4 ~= 1310, safely under the clamp with headroom to spare.
+    // Quieter overall than before by construction -- if this now sounds too
+    // quiet next to the other chips in the analog mix, re-tune per
+    // docs/circuit.md's mixing resistors rather than un-doing this shift.
+    int32_t mono = (int32_t)out.data[0] >> 4;
     if (mono > 2047) mono = 2047;
     if (mono < -2048) mono = -2048;
     return (int16_t)mono;
