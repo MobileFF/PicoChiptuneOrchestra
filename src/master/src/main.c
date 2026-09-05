@@ -138,6 +138,11 @@ int main(void) {
     gpio_pull_up(PIN_BTN_SKIP);
 
     oled_ui_init(); // I2C0 on GPIO0/1 + core1 render loop (no-op if no panel)
+    // Give the OLED (if present) a moment to show the title/"starting..."
+    // screen before the first song's filename overwrites it -- without this,
+    // SD mount + config load + slave_bus_init are fast enough that playback
+    // starts near-instantly and the boot screen is never actually seen.
+    sleep_ms(1000);
 
     static FATFS fs;
     if (f_mount(&fs, "0:", 1) != FR_OK) {
