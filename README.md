@@ -7,12 +7,12 @@ Raspberry Pi Pico で実現する分散マルチMCU方式のレトロサウン�
 実装したもの。マスター (Raspberry Pi Pico) がSDカードからVGM/VGZを読み、コマンドをSPIでスレーブ
 (チップ1台につき1枚)に配信、各スレーブが担当チップをソフトウェアエミュレートしてPWM出力、
 アナログ段でミキシングします。スレーブ基板は基本 RP2040-Zero ですが、**YM2612 / YM2151 /
-YM2203 / Sega PCM の4チップはRP2040標準クロックだと実機検証でリアルタイム処理が追いつかない
-ことが確認済み**のため Pico 2 (RP2350) を使います(詳細は下記クイックスタートと
-[firmware/pico2/README.md](firmware/pico2/README.md))。
+YM2203 の3チップはRP2040標準クロックだと実機検証でリアルタイム処理が追いつかないことが
+確認済み**のため Pico 2 (RP2350) を使います(詳細は下記クイックスタートと
+[firmware/pico2/README.md](firmware/pico2/README.md))。Sega PCMはRP2040のままで実機確認済みです。
 
 対応チップ: **SN76489** / **AY-3-8910** / **YM2612**\* / **YM2413** / **YM2151**\* / **YM2203**\* /
-**K051649 (SCC)** / **Sega PCM**\*(サンプルROMは~192KBまで、詳細は[docs/design-notes.md](docs/design-notes.md)参照)。
+**K051649 (SCC)** / **Sega PCM**(サンプルROMは~192KBまで、詳細は[docs/design-notes.md](docs/design-notes.md)参照)。
 \* Pico 2 (RP2350) 推奨/必須。
 
 - 回路・配線・BOM: [docs/circuit.md](docs/circuit.md)
@@ -36,10 +36,11 @@ cmake --build ~/build-vgmplay -j$(nproc)
 
 これで以下の9つの`.uf2`がビルドツリーの `src/<ターゲット>/` に生成されます
 (`~/build-vgmplay/src/master/master.uf2` など)。この既定コマンドは全スレーブを **RP2040**
-(通常のPico/RP2040-Zeroと同じCortex-M0+)向けにビルドしますが、下表で※を付けた4チップ
-(YM2612/YM2151/YM2203/Sega PCM)は実機検証でRP2040標準クロックでは処理が追いつかない
-ことが確認済みです(音程が均一に低くなる/テンポが乱れる形で症状化)。この4つは下記の
-Pico 2 向け追加ビルドで作った`.uf2`を使ってください:
+(通常のPico/RP2040-Zeroと同じCortex-M0+)向けにビルドしますが、下表で※を付けた3チップ
+(YM2612/YM2151/YM2203)は実機検証でRP2040標準クロックでは処理が追いつかない
+ことが確認済みです(音程が均一に低くなる/テンポが乱れる形で症状化)。この3つは下記の
+Pico 2 向け追加ビルドで作った`.uf2`を使ってください(Sega PCMはRP2040のままで問題なく
+鳴ることを実機で確認済みなので対象外です):
 
 | ファイル | 書き込み先 |
 |---|---|
@@ -48,23 +49,24 @@ Pico 2 向け追加ビルドで作った`.uf2`を使ってください:
 | `src/slave_ay8910/slave_ay8910.uf2` | RP2040-Zero (AY-3-8910) |
 | `src/slave_ym2413/slave_ym2413.uf2` | RP2040-Zero (YM2413) |
 | `src/slave_scc/slave_scc.uf2` | RP2040-Zero (K051649/SCC) |
+| `src/slave_segapcm/slave_segapcm.uf2` | RP2040-Zero (Sega PCM) |
 | `src/slave_ym2612/slave_ym2612.uf2` | **Pico 2 (RP2350)**※ (YM2612) |
 | `src/slave_ym2151/slave_ym2151.uf2` | **Pico 2 (RP2350)**※ (YM2151) |
 | `src/slave_ym2203/slave_ym2203.uf2` | **Pico 2 (RP2350)**※ (YM2203) |
-| `src/slave_segapcm/slave_segapcm.uf2` | **Pico 2 (RP2350)**※ (Sega PCM) |
 
 ※ 上の既定ビルドで生成されるのはRP2040版で、書き込んでも一応動きます(RP2040-Zeroに書き込む
 選択肢自体は残しています)が、上記の性能不足があるので推奨しません。Pico 2 向けは追加で:
 
 ```sh
 cmake -S . -B ~/build-vgmplay-pico2 -DPICO_BOARD=pico2
-cmake --build ~/build-vgmplay-pico2 --target slave_ym2612 slave_ym2151 slave_ym2203 slave_segapcm -j$(nproc)
+cmake --build ~/build-vgmplay-pico2 --target slave_ym2612 slave_ym2151 slave_ym2203 -j$(nproc)
 ```
 
 `~/build-vgmplay-pico2/src/<ターゲット>/<ターゲット>.uf2` が生成されます。ビルド済みのものは
-[firmware/pico2/](firmware/pico2/) にあります。配線・ピン番号はRP2040版と同じ(Pico 2はPico
-とピン配置互換)なので、そのまま載せ替えられます。詳細・オーバークロック設定・RP2040のままで
-粘る場合の選択肢は[firmware/pico2/README.md](firmware/pico2/README.md)参照。
+[firmware/pico2/](firmware/pico2/) にあります(Sega PCMのPico 2版も参考として置いてありますが、
+RP2040版で十分です)。配線・ピン番号はRP2040版と同じ(Pico 2はPicoとピン配置互換)なので、
+そのまま載せ替えられます。詳細・オーバークロック設定・RP2040のままで粘る場合の選択肢は
+[firmware/pico2/README.md](firmware/pico2/README.md)参照。
 
 各ボードをBOOTSELボタンを押しながらUSB接続し、対応する`.uf2`をUF2ドライブにコピーしてください。
 配線は[docs/circuit.md](docs/circuit.md)の通り。8スレーブ全部を組む必要はなく、使わないチップの
