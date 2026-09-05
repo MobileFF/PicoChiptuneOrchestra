@@ -580,3 +580,5 @@ cmake --build ~/build-vgmplay-verbose --target slave_sn76489   # 確認したい
 - 一時停止ボタン(現状スキップボタンのみ実装。`src/master/src/main.c`にpause実装の余地あり)
 - サンプルクロックのハード同期 (design doc §5の拡張案: 44.1kHz基準パルスをGPIOで全スレーブへ配線)
 - SPIフレームへのCRC/パリティ追加 (現状ノーチェック。ノイズの多い配線では要検討)
+- **1スレーブへの複数チップ統合**(軽量チップ同士に限る、例: SN76489+AY-3-8910)。
+  提案段階・未実装。設計案は[docs/multi-chip-slave-design.md](multi-chip-slave-design.md)参照
