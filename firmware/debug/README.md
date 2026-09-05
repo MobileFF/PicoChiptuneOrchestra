@@ -186,9 +186,26 @@ cmake --build ~/dev/build-oled-test -j4   # -> ~/dev/build-oled-test/oled_test.u
 ## `slave_sn76489_VERBOSE.uf2` (VGM_SLAVE_VERBOSE_LOG=ON)
 
 受信した全SPIフレーム(`WRITE0`など)を1件ずつログに出すSN76489スレーブです。配線・SPI疎通の
-確認専用で、**音声のリアルタイム性が崩れる**ため、確認が終わったら`../slave_sn76489.uf2`
+確認専用で、**音声のリアルタイム性が崩れる**ため、確認が終わったら`../pico1/slave_sn76489.uf2`
 (通常版)に書き戻してください。使い方は
 [docs/design-notes.md §8.2](../../docs/design-notes.md#82-スレーブ-rp2040-zero--pico)参照。
+
+**注意**: このビルドは1フレームごとに `printf` します。この `printf` は core1(音声エンジン側)で
+走り、長いと core0 のFIFO push を詰まらせ、SPIハードウェアの8バイトRX FIFOを溢れさせます。
+その結果、**ログ自身が引き起こしたバイト欠落**をトレースに見てしまうことがあります(下の
+`slave_ay8910_VERBOSE.uf2` の注記と同じ現象)。「本当にSPIリンクで化けているのか、ログの副作用
+なのか」を切り分けたいときは、下記の `slave_sn76489_RXTRACE.uf2` を使ってください。
+
+## `slave_sn76489_RXTRACE.uf2` (VGM_SLAVE_RX_TRACE=ON、フレームごとprintfなし)
+
+`slave_common/src/slave_spi_rx.c` の**生バイト記録リングバッファ(core0、最初の約900バイトを
+RAMに貯めて一括ダンプ)だけ**を有効にし、core1のフレームごと `printf` は無効にしたビルドです。
+core1が詰まらないので core0 もブロックされず、**トレースは「配線で実際に届いたバイト列」を
+そのまま反映します**。`001_Alex Kidd ... vgm` の砂嵐が、SPIリンクの化けなのか、`_VERBOSE` 版の
+ログ副作用(RX FIFO溢れ)なのかを切り分けるために追加(2026-09-06)。ダンプ形式・使い方は
+`slave_ay8910_VERBOSE.uf2` の項と同じ(`[RX  ] seq=.. val=.. t=..us`、`DISCARDED(resync)` 付きは
+再同期で捨てたバイト)。確認後は `../pico1/slave_sn76489.uf2` に戻してください。
+CMake: `-DVGM_SLAVE_RX_TRACE=ON`(`VGM_SLAVE_VERBOSE_LOG` は付けない)。
 
 ## `slave_ay8910_VERBOSE.uf2` (VGM_SLAVE_VERBOSE_LOG=ON、生バイト単位トレース付き)
 

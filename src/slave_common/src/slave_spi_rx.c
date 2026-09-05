@@ -6,7 +6,16 @@
 
 #include "vgm_spi_protocol.h"
 
-#if VGM_SLAVE_VERBOSE_LOG
+// The RX ring-buffer trace below (raw bytes as they land off SPI, with
+// timestamps, dumped once after the buffer fills) is enabled by EITHER:
+//  - VGM_SLAVE_VERBOSE_LOG : also turns on slave_engine.c's per-frame printf,
+//    which runs on core1 and can block long enough to back-pressure core0's
+//    FIFO push -> SPI HW RX FIFO overflow -> the trace shows losses that the
+//    logging itself caused (firmware/debug/README.md warns about this).
+//  - VGM_SLAVE_RX_TRACE : ONLY this ring buffer, no per-frame printf, so the
+//    capture reflects what the wire actually delivered. Use this to tell a
+//    real SPI problem apart from a logging artifact.
+#if VGM_SLAVE_VERBOSE_LOG || VGM_SLAVE_RX_TRACE
 #include <stdio.h>
 #include <stdbool.h>
 #include "pico/time.h"
@@ -54,7 +63,7 @@ void slave_spi_rx_run(uint spi_index, uint pin_sck, uint pin_mosi, uint pin_cs,
     // reordering above).
     while (spi_is_readable(spi)) (void)spi_get_hw(spi)->dr;
 
-#if VGM_SLAVE_VERBOSE_LOG
+#if VGM_SLAVE_VERBOSE_LOG || VGM_SLAVE_RX_TRACE
     // Capture into a RAM ring buffer instead of printf()-ing inline: a
     // printf() per byte (over UART/USB) can itself block for milliseconds,
     // which starves this loop of CPU time and overflows the SPI hardware's
@@ -127,23 +136,23 @@ void slave_spi_rx_run(uint spi_index, uint pin_sck, uint pin_mosi, uint pin_cs,
             while (!spi_is_readable(spi)) tight_loop_contents();
             opcode = (uint8_t)spi_get_hw(spi)->dr;
             if (opcode < 32 && ((valid_opcode_mask >> opcode) & 1u)) {
-#if VGM_SLAVE_VERBOSE_LOG
+#if VGM_SLAVE_VERBOSE_LOG || VGM_SLAVE_RX_TRACE
                 RX_TRACE(opcode, false);
 #endif
                 break;
             }
-#if VGM_SLAVE_VERBOSE_LOG
+#if VGM_SLAVE_VERBOSE_LOG || VGM_SLAVE_RX_TRACE
             RX_TRACE(opcode, true);
 #endif
         }
         while (!spi_is_readable(spi)) tight_loop_contents();
         uint8_t reg = (uint8_t)spi_get_hw(spi)->dr;
-#if VGM_SLAVE_VERBOSE_LOG
+#if VGM_SLAVE_VERBOSE_LOG || VGM_SLAVE_RX_TRACE
         RX_TRACE(reg, false);
 #endif
         while (!spi_is_readable(spi)) tight_loop_contents();
         uint8_t data = (uint8_t)spi_get_hw(spi)->dr;
-#if VGM_SLAVE_VERBOSE_LOG
+#if VGM_SLAVE_VERBOSE_LOG || VGM_SLAVE_RX_TRACE
         RX_TRACE(data, false);
 #endif
         uint32_t event = ((uint32_t)opcode << 16) | ((uint32_t)reg << 8) | data;

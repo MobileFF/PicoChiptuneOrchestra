@@ -18,6 +18,15 @@ line (no per-write spam), so the numbers reflect the real render() cost. \
 Use this, not VGM_SLAVE_VERBOSE_LOG, to check whether a slave keeps up with \
 44.1kHz. Safe-ish for listening (1 short print/sec)." OFF)
 
+option(VGM_SLAVE_RX_TRACE
+    "Capture the first ~900 raw SPI bytes a slave receives (value + timestamp) \
+into a RAM ring buffer on core0 and dump them once, WITHOUT the per-frame \
+core1 printf that VGM_SLAVE_VERBOSE_LOG also enables. That per-frame printf \
+can itself back-pressure core0 into overflowing the SPI RX FIFO, so a \
+VGM_SLAVE_VERBOSE_LOG trace can show byte loss the logging caused; this \
+option's trace reflects what the wire actually delivered. Bring-up debugging \
+only." OFF)
+
 option(VGM_MASTER_VERBOSE_LOG
     "Log every VGM command the master parses and every SPI frame it sends \
 in response, over UART/USB CDC. Bring-up debugging only: printing this much \
