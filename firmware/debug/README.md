@@ -207,6 +207,11 @@ core1が詰まらないので core0 もブロックされず、**トレースは
 再同期で捨てたバイト)。確認後は `../pico1/slave_sn76489.uf2` に戻してください。
 CMake: `-DVGM_SLAVE_RX_TRACE=ON`(`VGM_SLAVE_VERBOSE_LOG` は付けない)。
 
+同梱版は **`-DVGM_SLAVE_RX_TRACE_LEN=9000`**(生バイト9000個 ≒ 25秒級SN76489曲のほぼ全域、
+BSS約108KB)でビルドしてあります。`SN_2.log`(既定900個 ≒ 冒頭2秒)は化け無しだったので、
+曲の後半でSPIフレーム化けが起きていないかを見るために伸ばしています。任意の長さにするには
+`-DVGM_SLAVE_RX_TRACE_LEN=N` を追加。
+
 ## `slave_ay8910_VERBOSE.uf2` (VGM_SLAVE_VERBOSE_LOG=ON、生バイト単位トレース付き)
 
 AY-3-8910スレーブが不安定(演奏中に不正なMUTEが発生する、レジスタ値が化ける等)な問題の調査用に、

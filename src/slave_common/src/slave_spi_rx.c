@@ -75,12 +75,19 @@ void slave_spi_rx_run(uint spi_index, uint pin_sck, uint pin_mosi, uint pin_cs,
     // captured.
     typedef struct {
         uint32_t seq;
+        uint32_t t_us;       // low 32 bits of time_us_64() -- wraps at ~71 min,
+                             // far longer than any capture, so fine
         uint8_t val;
-        uint64_t t_us;
-        bool resync_discard; // true if this byte was thrown away while
-                              // hunting for a valid opcode (see below)
+        uint8_t resync_discard; // 1 if this byte was thrown away while
+                                // hunting for a valid opcode (see below)
     } rx_trace_entry_t;
-    #define RX_TRACE_LEN 900
+    // Entries. 900 (~1.8 s at SMS-tune write rates) by default; override with
+    // -DVGM_SLAVE_RX_TRACE_LEN=N to see more of a song (12 bytes each, so
+    // e.g. 9000 = ~108 KB RAM = most of a 25 s SN76489 track).
+    #ifndef VGM_SLAVE_RX_TRACE_LEN
+    #define VGM_SLAVE_RX_TRACE_LEN 900
+    #endif
+    #define RX_TRACE_LEN VGM_SLAVE_RX_TRACE_LEN
     static rx_trace_entry_t trace[RX_TRACE_LEN];
     uint32_t trace_count = 0;
     bool dumped = false;
@@ -89,15 +96,16 @@ void slave_spi_rx_run(uint spi_index, uint pin_sck, uint pin_mosi, uint pin_cs,
         do { \
             if (trace_count < RX_TRACE_LEN) { \
                 trace[trace_count++] = (rx_trace_entry_t){ \
-                    .seq = byte_seq, .val = (v), .t_us = time_us_64(), .resync_discard = (discard), \
+                    .seq = byte_seq, .val = (v), .t_us = (uint32_t)time_us_64(), \
+                    .resync_discard = (discard) ? 1u : 0u, \
                 }; \
             } else if (!dumped) { \
                 dumped = true; \
                 printf("[RXTRACE] dumping %d captured bytes...\n", RX_TRACE_LEN); \
                 for (uint32_t k = 0; k < RX_TRACE_LEN; k++) { \
-                    printf("[RX  ] seq=%lu val=0x%02X t=%lluus%s\n", \
+                    printf("[RX  ] seq=%lu val=0x%02X t=%luus%s\n", \
                            (unsigned long)trace[k].seq, trace[k].val, \
-                           (unsigned long long)trace[k].t_us, \
+                           (unsigned long)trace[k].t_us, \
                            trace[k].resync_discard ? " DISCARDED(resync)" : ""); \
                 } \
                 printf("[RXTRACE] dump done, no further capture this run\n"); \
