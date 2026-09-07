@@ -44,9 +44,18 @@ static bool s_dirty = true;           // s_mode/s_text/s_chip_mask changed since
 // prints them from vgm/main if it wants.
 static volatile bool     s_oled_answered;   // panel ACKed at least once
 static volatile uint32_t s_oled_reinits;    // times the render loop had to re-init a wedged panel
+static volatile uint32_t s_oled_frames;     // core1 loop iterations (heartbeat -- stuck if this stops)
+static volatile uint32_t s_oled_shows_ok;   // successful ssd1306_show() pushes
+static volatile uint32_t s_oled_shows_fail; // failed pushes (I2C write didn't complete)
 
 bool     oled_ui_answered(void)      { return s_oled_answered; }
 uint32_t oled_ui_reinit_count(void)  { return s_oled_reinits; }
+void oled_ui_diag(uint32_t *frames, uint32_t *ok, uint32_t *fail, uint32_t *reinits) {
+    if (frames)  *frames  = s_oled_frames;
+    if (ok)      *ok      = s_oled_shows_ok;
+    if (fail)    *fail    = s_oled_shows_fail;
+    if (reinits) *reinits = s_oled_reinits;
+}
 
 static void publish(ui_mode_t mode, const char *text, uint32_t chip_mask) {
     if (!s_enabled) return;
@@ -172,6 +181,7 @@ static void core1_main(void) {
     int show_fails = 0;
 
     for (;;) {
+        s_oled_frames++; // heartbeat: if this stops incrementing, core1 is stuck
         if (!panel_up) {
             if (ssd1306_init(OLED_I2C, OLED_ADDR)) {
                 panel_up = true;
@@ -207,12 +217,13 @@ static void core1_main(void) {
                        elapsed != last_elapsed;
         if (changed) {
             if (render(mode, text, mask, elapsed)) {
+                s_oled_shows_ok++;
                 show_fails = 0;
                 last_mode = mode;
                 memcpy(last_text, text, sizeof(last_text));
                 last_mask = mask;
                 last_elapsed = elapsed;
-            } else if (++show_fails >= 5) {
+            } else if (s_oled_shows_fail++, ++show_fails >= 5) {
                 // Panel stopped answering mid-session (unplugged, glitch,
                 // wedged bus) -- drop back to the recovery path. NOT printf
                 // (see note by the decl): a printf from core1 here is exactly

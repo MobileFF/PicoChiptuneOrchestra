@@ -96,10 +96,11 @@ static bool play_one(const char *dir_path, const char *fname) {
     printf("playing: %s\n", fname);
     oled_ui_set_song(fname);
     // OLED health, logged here on core0 (core1 mustn't printf -- see oled_ui.c).
-    { static uint32_t last_reinits = 0;
-      uint32_t r = oled_ui_reinit_count();
-      if (r != last_reinits) { printf("  OLED: re-initialised %lu time(s)\n", (unsigned long)r); last_reinits = r; }
-      else if (!oled_ui_answered()) printf("  OLED: no panel has answered yet\n"); }
+    { uint32_t fr = 0, ok = 0, fl = 0, ri = 0;
+      oled_ui_diag(&fr, &ok, &fl, &ri);
+      printf("  OLED: answered=%d frames=%lu shows_ok=%lu shows_fail=%lu reinits=%lu\n",
+             (int)oled_ui_answered(), (unsigned long)fr, (unsigned long)ok,
+             (unsigned long)fl, (unsigned long)ri); }
     vgm_player_opts_t opts = {
         .loop_enabled = true,
         .max_loops = 2, // play a looping song's loop section twice, then end
@@ -111,6 +112,10 @@ static bool play_one(const char *dir_path, const char *fname) {
     if (!vgm_player_play(play_path, &opts)) {
         printf("  ERROR: playback aborted (bad/unsupported VGM data)\n");
     }
+    { uint32_t fr = 0, ok = 0, fl = 0, ri = 0;
+      oled_ui_diag(&fr, &ok, &fl, &ri);
+      printf("  OLED after: frames=%lu shows_ok=%lu shows_fail=%lu reinits=%lu\n",
+             (unsigned long)fr, (unsigned long)ok, (unsigned long)fl, (unsigned long)ri); }
     sleep_ms(2000); // pause between songs so the next one doesn't start instantly
     return true;
 }

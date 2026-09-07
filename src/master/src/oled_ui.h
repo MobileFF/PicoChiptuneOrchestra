@@ -20,6 +20,10 @@ void oled_ui_init(void);
 // least once; reinit_count = times the loop had to re-init a wedged panel.
 bool     oled_ui_answered(void);
 uint32_t oled_ui_reinit_count(void);
+// Snapshot of the core1 render loop's counters (any pointer may be NULL):
+// frames = loop iterations so far (heartbeat -- frozen if it stops),
+// ok/fail = successful / failed framebuffer pushes, reinits = wedge recoveries.
+void     oled_ui_diag(uint32_t *frames, uint32_t *ok, uint32_t *fail, uint32_t *reinits);
 
 // Now-playing filename (shown at the top; wrapped to two lines, then
 // truncated). Also clears the chip list back to "detecting..." and is the
