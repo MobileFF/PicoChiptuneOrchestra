@@ -154,6 +154,43 @@ enum vgm_spi_opcode {
     // output rate, so sample_rate_hz never changes).
     VGMSPI_OP_CLOCK = 0x0D,
 
+    // --- YM2612 PCM / DAC streaming (Mega Drive "PCM" = YM2612 ch6 DAC) ----
+    //
+    // A MD VGM streams DAC samples far too fast (8-25 kHz) to send one SPI
+    // frame per sample, so the whole PCM data bank (VGM 0x67 type-0x00
+    // block(s), concatenated) is uploaded to the YM2612 slave once at song
+    // start, and the slave then feeds ymfm's DAC from its local copy on its
+    // own render clock. The master only sends compact "play from here at
+    // this rate" control frames -- a few hundred per second, not tens of
+    // thousands. Sega PCM (VGMSPI_OP_PCM_UPLOAD_*) uses the same idea.
+    //
+    // Reset the slave's PCM-bank UPLOAD write cursor to 0. reg/data ignored.
+    // Sent once at song start, before the upload burst below.
+    VGMSPI_OP_YM2612_PCM_RESET = 0x0E,
+    // One PCM-bank byte. reg ignored, data = byte. Auto-increments the
+    // upload cursor; bytes past the slave's fixed budget are dropped.
+    VGMSPI_OP_YM2612_PCM_BYTE = 0x0F,
+    // Begin (or re-anchor) DAC auto-playback. reg/data = bank read offset
+    // bits [15:8]/[7:0]; the [23:16] byte comes from the last
+    // VGMSPI_OP_YM2612_DAC_SEEK (0 by default). The slave sets its DAC read
+    // cursor here and starts advancing it each output sample per the rate
+    // below, writing each byte to YM2612 port-0 register 0x2A. The master
+    // sends this at the start of every run of VGM 0x8n commands.
+    VGMSPI_OP_YM2612_DAC_START = 0x10,
+    // DAC advance rate: reg:data = a 16-bit fixed-point value = (bank bytes
+    // consumed per output sample) * 65536, i.e. always 1..65535 since the
+    // DAC rate is below the 44.1 kHz output rate. The master recomputes this
+    // over a sliding window of 0x8n commands and re-sends it only when it
+    // moves materially, so a jittering VGM 0x8n `n` doesn't flood the bus.
+    VGMSPI_OP_YM2612_DAC_RATE = 0x11,
+    // Stop DAC auto-advance (the cursor freezes; ymfm holds its last DAC
+    // value). Sent when a 0x8n run ends (next VGM command isn't 0x8n).
+    VGMSPI_OP_YM2612_DAC_STOP = 0x12,
+    // Latch bits [23:16] of the DAC read offset for the next
+    // VGMSPI_OP_YM2612_DAC_START. reg ignored, data = offset[23:16]. Only
+    // sent when that byte changes (PCM banks over 64 KB -- uncommon).
+    VGMSPI_OP_YM2612_DAC_SEEK = 0x13,
+
     // Not a real opcode: one past the highest valid one. slave_spi_rx.c
     // range-checks the byte in a frame's opcode position against this while
     // resyncing after a dropped byte -- keep it last in this enum.
@@ -176,7 +213,10 @@ enum vgm_spi_opcode {
 #define VGMSPI_MASK_YM2413  (VGMSPI_MASK_BASE | (1u << VGMSPI_OP_WRITE0))
 #define VGMSPI_MASK_YM2151  (VGMSPI_MASK_BASE | (1u << VGMSPI_OP_WRITE0))
 #define VGMSPI_MASK_YM2203  (VGMSPI_MASK_BASE | (1u << VGMSPI_OP_WRITE0))
-#define VGMSPI_MASK_YM2612  (VGMSPI_MASK_BASE | (1u << VGMSPI_OP_WRITE0) | (1u << VGMSPI_OP_WRITE1))
+#define VGMSPI_MASK_YM2612  (VGMSPI_MASK_BASE | (1u << VGMSPI_OP_WRITE0) | (1u << VGMSPI_OP_WRITE1) | \
+                             (1u << VGMSPI_OP_YM2612_PCM_RESET) | (1u << VGMSPI_OP_YM2612_PCM_BYTE) | \
+                             (1u << VGMSPI_OP_YM2612_DAC_START) | (1u << VGMSPI_OP_YM2612_DAC_RATE) | \
+                             (1u << VGMSPI_OP_YM2612_DAC_STOP) | (1u << VGMSPI_OP_YM2612_DAC_SEEK))
 #define VGMSPI_MASK_SCC     (VGMSPI_MASK_BASE | (1u << VGMSPI_OP_SCC_WAVEFORM) | \
                              (1u << VGMSPI_OP_SCC_FREQ) | (1u << VGMSPI_OP_SCC_VOLUME) | \
                              (1u << VGMSPI_OP_SCC_KEYON))

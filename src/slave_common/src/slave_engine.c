@@ -210,6 +210,42 @@ void slave_audio_engine_run(const chip_ops_t *ops, uint audio_pin, const char *c
                     printf("[%s] SEGAPCM_ROM_BASE 0x%02X%02X00\n", chip_name, reg, data);
 #endif
                     break;
+                // YM2612 PCM/DAC streaming (Mega Drive "PCM"). Ports 20-25
+                // aren't real chip ports -- same "reuse the generic write()
+                // with a distinguishing port" pattern as the SCC / Sega PCM
+                // opcodes above. Bank upload is a burst at song start;
+                // DAC_START/RATE/STOP/SEEK are the compact playback control.
+                case VGMSPI_OP_YM2612_PCM_RESET:
+                    ops->write(20, reg, data);
+                    break;
+                case VGMSPI_OP_YM2612_PCM_BYTE:
+                    ops->write(21, reg, data);
+#if VGM_SLAVE_VERBOSE_LOG
+                    if ((++pcm_upload_count & 0xFFF) == 0)
+                        printf("[%s] YM2612 PCM ... %lu bytes\n", chip_name, (unsigned long)pcm_upload_count);
+#endif
+                    break;
+                case VGMSPI_OP_YM2612_DAC_START:
+                    ops->write(22, reg, data);
+#if VGM_SLAVE_VERBOSE_LOG
+                    printf("[%s] DAC_START off=0x%02X%02X\n", chip_name, reg, data);
+#endif
+                    break;
+                case VGMSPI_OP_YM2612_DAC_RATE:
+                    ops->write(23, reg, data);
+#if VGM_SLAVE_VERBOSE_LOG
+                    printf("[%s] DAC_RATE %u/65536\n", chip_name, (unsigned)(((uint16_t)reg << 8) | data));
+#endif
+                    break;
+                case VGMSPI_OP_YM2612_DAC_STOP:
+                    ops->write(24, reg, data);
+#if VGM_SLAVE_VERBOSE_LOG
+                    printf("[%s] DAC_STOP\n", chip_name);
+#endif
+                    break;
+                case VGMSPI_OP_YM2612_DAC_SEEK:
+                    ops->write(25, reg, data);
+                    break;
                 case VGMSPI_OP_MUTE:
                     muted = true;
                     printf("[%s] MUTE\n", chip_name);

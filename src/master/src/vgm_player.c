@@ -96,6 +96,66 @@ static volatile uint32_t s_elapsed_seconds;
 // the whole song at its power-on default (a uniform pitch/tempo shift).
 static uint8_t s_chip_preset[VGM_CHIP_COUNT];
 
+// --- YM2612 PCM/DAC streaming state (Mega Drive "PCM") ---------------------
+// The PCM data bank (VGM 0x67 type-0 blocks) is uploaded to the YM2612 slave
+// once; thereafter the master only tracks a cursor and tells the slave when
+// to (re)start DAC auto-playback and at what rate. See
+// VGMSPI_OP_YM2612_DAC_* in protocol/vgm_spi_protocol.h. All reset per song.
+static uint32_t s_ym_dac_pos;        // read cursor into the concatenated bank (VGM 0xE0 seek / 0x8n advance)
+static bool     s_ym_dac_run;        // currently inside a run of 0x8n commands
+static uint8_t  s_ym_dac_seek_hi;    // offset[23:16] last sent as VGMSPI_OP_YM2612_DAC_SEEK
+static uint16_t s_ym_dac_rate16;     // last VGMSPI_OP_YM2612_DAC_RATE value sent
+static uint32_t s_ym_dac_win_bytes;  // 0x8n commands since the last rate recompute
+static uint32_t s_ym_dac_win_samps;  // sum of their `n` values (output samples) since then
+
+// End the current 0x8n run: tell the slave to freeze its DAC cursor. Called
+// the moment a non-0x8n command is seen (or on 0xE0 / song end).
+static void ym_dac_end_run(void) {
+    if (s_ym_dac_run) {
+        slave_bus_send(VGM_CHIP_YM2612, VGMSPI_OP_YM2612_DAC_STOP, 0, 0);
+        s_ym_dac_run = false;
+    }
+}
+
+// One VGM 0x8n command: `n` = its low nibble (extra output samples to wait
+// after this DAC step). Advances the bank cursor, (re)anchors the slave's
+// DAC playback at run starts, and keeps its rate roughly in sync.
+static void ym_dac_step(uint32_t n) {
+    if (!s_ym_dac_run) {
+        uint8_t hi = (uint8_t)(s_ym_dac_pos >> 16);
+        if (hi != s_ym_dac_seek_hi) {
+            slave_bus_send(VGM_CHIP_YM2612, VGMSPI_OP_YM2612_DAC_SEEK, 0, hi);
+            s_ym_dac_seek_hi = hi;
+        }
+        slave_bus_send(VGM_CHIP_YM2612, VGMSPI_OP_YM2612_DAC_START,
+                       (uint8_t)(s_ym_dac_pos >> 8), (uint8_t)s_ym_dac_pos);
+        uint16_t r = (n == 0) ? 0xFFFFu : (uint16_t)(65536u / n);
+        if (r == 0) r = 1;
+        slave_bus_send(VGM_CHIP_YM2612, VGMSPI_OP_YM2612_DAC_RATE, (uint8_t)(r >> 8), (uint8_t)r);
+        s_ym_dac_rate16 = r;
+        s_ym_dac_win_bytes = 0;
+        s_ym_dac_win_samps = 0;
+        s_ym_dac_run = true;
+    }
+    s_ym_dac_pos++;
+    s_ym_dac_win_bytes++;
+    s_ym_dac_win_samps += (n == 0) ? 1u : n;
+    if (s_ym_dac_win_bytes >= 32) {
+        uint32_t denom = s_ym_dac_win_samps ? s_ym_dac_win_samps : 1;
+        uint32_t r32 = (s_ym_dac_win_bytes * 65536u) / denom; // bytes-per-sample * 65536
+        if (r32 > 0xFFFFu) r32 = 0xFFFFu;
+        if (r32 == 0) r32 = 1;
+        uint32_t d = (r32 > s_ym_dac_rate16) ? r32 - s_ym_dac_rate16 : s_ym_dac_rate16 - r32;
+        if (d > (uint32_t)(s_ym_dac_rate16 >> 6) + 8u) { // moved > ~1.5%
+            slave_bus_send(VGM_CHIP_YM2612, VGMSPI_OP_YM2612_DAC_RATE,
+                           (uint8_t)(r32 >> 8), (uint8_t)r32);
+            s_ym_dac_rate16 = (uint16_t)r32;
+        }
+        s_ym_dac_win_bytes = 0;
+        s_ym_dac_win_samps = 0;
+    }
+}
+
 static void reassert_clocks(void) {
     // Only the chips whose slave renders at a clock-derived native rate --
     // SN76489/AY-3-8910/SCC resample to a fixed output rate, so their
@@ -286,7 +346,8 @@ static bool skip_command(reader_t *rd, uint8_t cmd) {
     if (cmd >= 0xA1 && cmd <= 0xAF) return reader_skip(rd, 2);
     if (cmd >= 0xB0 && cmd <= 0xBF) return reader_skip(rd, 2);
     if (cmd >= 0xC0 && cmd <= 0xDF) return reader_skip(rd, 3);
-    if (cmd == 0xE0 || cmd == 0xE1) return reader_skip(rd, 4);
+    // 0xE0 (seek PCM data bank) is handled in the main loop, not here.
+    if (cmd == 0xE1) return reader_skip(rd, 4);
     if (cmd >= 0xE2 && cmd <= 0xFF) return reader_skip(rd, 4);
     switch (cmd) {
         case 0x90: return reader_skip(rd, 4);
@@ -432,6 +493,27 @@ static bool handle_data_block(reader_t *rd) {
         wait_reset();
         return true;
     }
+
+    if (type == 0x00) {
+        // YM2612 PCM data bank: every type-0 block in the file is one big
+        // logical bank (blocks concatenated in order). Stream it byte-for-
+        // byte to the YM2612 slave's local copy now; the 0x8n commands later
+        // in the stream reference offsets into it. slave_bus_send() no-ops
+        // when YM2612 isn't wired up, so the bytes are still consumed here to
+        // stay in sync either way. See VGMSPI_OP_YM2612_PCM_* / the DAC state
+        // above / docs/design-notes.md.
+        for (uint32_t i = 0; i < size; i++) {
+            int b = reader_byte(rd);
+            if (b < 0) return false;
+            slave_bus_send(VGM_CHIP_YM2612, VGMSPI_OP_YM2612_PCM_BYTE, 0, (uint8_t)b);
+        }
+        // Same re-baseline rationale as the Sega PCM block above: a big bank
+        // takes real wall-clock time to shift out and sits before the first
+        // wait command.
+        wait_reset();
+        return true;
+    }
+
     return reader_skip(rd, size);
 }
 
@@ -528,6 +610,18 @@ bool vgm_player_play(const char *path, const vgm_player_opts_t *opts) {
         slave_bus_send(VGM_CHIP_SEGAPCM, VGMSPI_OP_SEGAPCM_BANK, bankshift, bankmask);
     }
 
+    // YM2612 PCM/DAC (Mega Drive "PCM"): fresh upload cursor, DAC stopped,
+    // master-side cursor/run state cleared. The bank itself is uploaded from
+    // the song's 0x67 type-0 blocks in the main loop below.
+    slave_bus_send(VGM_CHIP_YM2612, VGMSPI_OP_YM2612_PCM_RESET, 0, 0);
+    slave_bus_send(VGM_CHIP_YM2612, VGMSPI_OP_YM2612_DAC_STOP, 0, 0);
+    s_ym_dac_pos = 0;
+    s_ym_dac_run = false;
+    s_ym_dac_seek_hi = 0;
+    s_ym_dac_rate16 = 0;
+    s_ym_dac_win_bytes = 0;
+    s_ym_dac_win_samps = 0;
+
     if (opts && opts->on_chips)
         opts->on_chips(header_chip_mask(header));
 
@@ -550,6 +644,11 @@ bool vgm_player_play(const char *path, const vgm_player_opts_t *opts) {
     for (;;) {
         int cmd = reader_byte(&rd);
         if (cmd < 0) break; // ran off the end without a proper 0x66 -- treat as EOF
+
+        // A run of YM2612 DAC steps (0x8n) ends the moment any other command
+        // appears -- tell the slave to freeze its DAC cursor. (0xE0 does its
+        // own end-run; harmless to call twice.)
+        if (cmd < 0x80 || cmd > 0x8F) ym_dac_end_run();
 
         switch (cmd) {
             case 0x50: {
@@ -663,6 +762,17 @@ bool vgm_player_play(const char *path, const vgm_player_opts_t *opts) {
             case 0x67:
                 if (!handle_data_block(&rd)) { ok = false; }
                 break;
+            case 0xE0: {
+                // Seek the YM2612 PCM data bank read pointer: 0xE0 + 4-byte
+                // LE offset. The following 0x8n run streams from here.
+                int b0 = reader_byte(&rd), b1 = reader_byte(&rd),
+                    b2 = reader_byte(&rd), b3 = reader_byte(&rd);
+                if (b0 < 0 || b1 < 0 || b2 < 0 || b3 < 0) { ok = false; break; }
+                s_ym_dac_pos = (uint32_t)b0 | ((uint32_t)b1 << 8) |
+                               ((uint32_t)b2 << 16) | ((uint32_t)b3 << 24);
+                ym_dac_end_run(); // next 0x8n re-anchors the slave at the new pos
+                break;
+            }
             case 0xC0: {
                 // Sega PCM register write: 0xC0 bbaa dd (16-bit LE offset).
                 // Our slave's meaningful register footprint fits an 8-bit
@@ -680,10 +790,13 @@ bool vgm_player_play(const char *path, const vgm_player_opts_t *opts) {
                 if (cmd >= 0x70 && cmd <= 0x7F) {
                     wait_samples((uint32_t)(cmd & 0x0F) + 1);
                 } else if (cmd >= 0x80 && cmd <= 0x8F) {
-                    // YM2612 DAC-from-PCM-bank write: we don't stream PCM in
-                    // this build (see docs/design-notes.md), so just honor
-                    // the implicit wait.
-                    wait_samples((uint32_t)(cmd & 0x0F));
+                    // YM2612 DAC step from the PCM data bank: advance the
+                    // slave's DAC playback (uploaded bank + auto-fed cursor,
+                    // see ym_dac_step / VGMSPI_OP_YM2612_DAC_*), then honor
+                    // the command's own `n`-sample wait for FM/PSG sync.
+                    uint32_t n = (uint32_t)(cmd & 0x0F);
+                    ym_dac_step(n);
+                    wait_samples(n);
                 } else if (!skip_command(&rd, (uint8_t)cmd)) {
                     ok = false;
                 }
@@ -695,6 +808,7 @@ bool vgm_player_play(const char *path, const vgm_player_opts_t *opts) {
     }
 
 done:
+    ym_dac_end_run(); // stop YM2612 DAC auto-advance before the mute
     slave_bus_mute_all();
     f_close(&file);
     return ok || skip_requested;

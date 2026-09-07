@@ -47,6 +47,23 @@ gcc -O0 -g -Wall -I shim -I "$MASTER_SRC" -I "$PROTO" \
 /tmp/segapcm_block_hosttest   # prints "ok" and exits 0, or FAIL lines and exits 1
 ```
 
+## YM2612 PCM / DAC streaming (Mega Drive "PCM": 0x67 type-0 + 0x8n + 0xE0)
+
+Builds its own recording slave_bus and a synthetic MD VGM, then asserts the
+type-0 PCM data block is uploaded byte-for-byte as `YM2612_PCM_BYTE` (after
+one `YM2612_PCM_RESET`), a run of `0x8n` commands emits `DAC_START` +
+`DAC_RATE`, a `0xE0` seek re-anchors the next run (with `DAC_SEEK` for the
+>64 KB offset), every non-`0x8n` command ends a run with `DAC_STOP`, the
+`0x52 2B 80` DAC-enable write is still forwarded normally, and the parser
+stays in sync. Self-contained -- takes no argument.
+
+```sh
+gcc -O0 -g -Wall -I shim -I "$MASTER_SRC" -I "$PROTO" \
+    test_vgm_ym2612_dac.c "$MASTER_SRC/vgm_player.c" "$MASTER_SRC/vgm_chips.c" \
+    -o /tmp/ym2612_dac_hosttest
+/tmp/ym2612_dac_hosttest   # prints "ok" and exits 0, or FAIL lines and exits 1
+```
+
 ## Streaming gzip (.vgz) decompression
 
 Exercises the same 32KB-window streaming loop as `vgz_inflate.c` (with
