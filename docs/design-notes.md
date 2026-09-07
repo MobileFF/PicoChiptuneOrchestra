@@ -436,7 +436,16 @@ YM2612/YM2413/YM2151/YM2203は ymfm が生成するネイティブなサンプ�
     曲)は転送はされるが帯域的に間に合わない。ホストテスト: `tools/host_tests/test_vgm_ym2612_dac.c`
   - **実機確認済み(2026-09-07)**: それまで無音だったMDのPCMドラム/ボイスが鳴ることをユーザーが確認
 
-## 6. テスト
+- **OLEDが「starting...」で固まる不具合(2026-09-07修正)**: 症状は「音声は正常だがOLEDが起動画面の
+  まま更新されない」。原因は`src/master/src/oled_ui.c`の**core1(描画ループ)からの`printf`**。
+  masterのstdioはUSB CDC(TinyUSB)で、TinyUSBはシングルコア前提。core0側のstdio-usbタイマタスクが
+  `tud_task()`を回している最中に、core0が忙しくてUSBをドレインできていない窓
+  (SD mount、起動時の1秒待ち、YM2612 PCMバンクの大量SPIアップロード等)で core1 が`printf`すると、
+  TinyUSB内部で競合して**core1がそのまま停止**、パネルは最後のフレーム(starting...)のまま固まる。
+  対策: core1の`printf`を全廃(`s_oled_answered`/`s_oled_reinits`のvolatileフラグに記録し、
+  必要なら core0 側の`main.c`が出力)。これで I2C が一時的にwedgeしてもcore1のリカバリループ
+  (`ssd1306_init`再試行 + `oled_i2c_bring_up`)が実際に回るようになった。再発するようなら
+  `OLED_I2C_HZ`を100kHzに下げる/SDA-SCLのプルアップ強化(ハード側)も検討。
 
 実機(RP2040ボード)がない状態でも検証できる範囲はホスト側でテスト済みです:
 

@@ -35,6 +35,19 @@ static char s_text[64];               // filename, or status message
 static uint32_t s_chip_mask;
 static bool s_dirty = true;           // s_mode/s_text/s_chip_mask changed since last render
 
+// core1 must NEVER printf: stdio here goes to USB CDC (TinyUSB), which is not
+// multicore-safe, and core0's stdio-usb timer task pumps tud_task()
+// concurrently -- a printf from core1 while core0 is busy (SD mount, a big
+// YM2612 PCM-bank SPI upload, ...) and not draining USB has hung core1 dead,
+// leaving the panel frozen on its last frame ("starting...") while audio
+// keeps playing. So the render loop records state in these instead and core0
+// prints them from vgm/main if it wants.
+static volatile bool     s_oled_answered;   // panel ACKed at least once
+static volatile uint32_t s_oled_reinits;    // times the render loop had to re-init a wedged panel
+
+bool     oled_ui_answered(void)      { return s_oled_answered; }
+uint32_t oled_ui_reinit_count(void)  { return s_oled_reinits; }
+
 static void publish(ui_mode_t mode, const char *text, uint32_t chip_mask) {
     if (!s_enabled) return;
     critical_section_enter_blocking(&s_cs);
@@ -166,7 +179,7 @@ static void core1_main(void) {
                 last_mode = (ui_mode_t)-1; // force a full redraw of current state
                 last_text[0] = '\1';
                 last_mask = last_elapsed = 0xFFFFFFFFu;
-                printf("OLED: SSD1306 answered at 0x%02X\n", OLED_ADDR);
+                s_oled_answered = true; // NOT printf -- see note by the decl
             } else {
                 oled_i2c_bring_up(); // clear a possible wedge, then wait and retry
                 sleep_ms(1000);
@@ -201,8 +214,10 @@ static void core1_main(void) {
                 last_elapsed = elapsed;
             } else if (++show_fails >= 5) {
                 // Panel stopped answering mid-session (unplugged, glitch,
-                // wedged bus) -- drop back to the recovery path.
-                printf("OLED: panel stopped responding, re-initialising\n");
+                // wedged bus) -- drop back to the recovery path. NOT printf
+                // (see note by the decl): a printf from core1 here is exactly
+                // what used to hang this loop, so the panel never recovered.
+                s_oled_reinits++;
                 panel_up = false;
                 continue;
             }

@@ -95,6 +95,11 @@ static bool play_one(const char *dir_path, const char *fname) {
 
     printf("playing: %s\n", fname);
     oled_ui_set_song(fname);
+    // OLED health, logged here on core0 (core1 mustn't printf -- see oled_ui.c).
+    { static uint32_t last_reinits = 0;
+      uint32_t r = oled_ui_reinit_count();
+      if (r != last_reinits) { printf("  OLED: re-initialised %lu time(s)\n", (unsigned long)r); last_reinits = r; }
+      else if (!oled_ui_answered()) printf("  OLED: no panel has answered yet\n"); }
     vgm_player_opts_t opts = {
         .loop_enabled = true,
         .max_loops = 2, // play a looping song's loop section twice, then end

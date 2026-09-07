@@ -8,11 +8,18 @@
 // every setter becomes a no-op -- the player runs identically without it.
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
 
 // Bring up I2C0 on GPIO0/1, probe+init the SSD1306, and (on success)
 // launch core1's render loop. Call once, after stdio and slave_bus init.
 void oled_ui_init(void);
+
+// Diagnostics the core1 render loop records instead of printf-ing (it must
+// not -- see oled_ui.c). core0 can log these. answered = the panel ACKed at
+// least once; reinit_count = times the loop had to re-init a wedged panel.
+bool     oled_ui_answered(void);
+uint32_t oled_ui_reinit_count(void);
 
 // Now-playing filename (shown at the top; wrapped to two lines, then
 // truncated). Also clears the chip list back to "detecting..." and is the
