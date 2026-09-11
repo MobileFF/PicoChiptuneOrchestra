@@ -82,6 +82,7 @@ void slave_bus_write(vgm_chip_id_t c, uint8_t port, uint8_t reg, uint8_t data) {
     if (c == VGM_CHIP_AY8910) ay8910_write(0, reg, data);
 }
 void slave_bus_set_clock(vgm_chip_id_t c, uint8_t preset) { (void)c; (void)preset; } // rate already fixed by slave_bus_reset()
+void slave_bus_send_burst(vgm_chip_id_t c, uint8_t op, uint8_t r, uint8_t d) { slave_bus_send(c, op, r, d); }
 void slave_bus_send(vgm_chip_id_t c, uint8_t opcode, uint8_t reg, uint8_t data) {
     if (c != VGM_CHIP_SCC) return;
     switch (opcode) { // same mapping as slave_common/src/slave_engine.c

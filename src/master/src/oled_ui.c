@@ -13,6 +13,17 @@
 #include "vgm_chips.h"
 #include "vgm_player.h"
 
+// core1 must wait via busy_wait_*, NOT sleep_ms/sleep_us: pico-sdk's
+// sleep_*() (even from core1) arms an alarm on the DEFAULT alarm pool, which
+// lives on core0, then __wfe()s until core0's timer IRQ services it. If core0
+// is busy for a long stretch and slow to take that IRQ (SD mount, a .vgz
+// inflate + SD writes, a big YM2612 PCM-bank SPI upload), core1's __wfe never
+// wakes and the render loop hangs -- panel frozen on its last frame while
+// audio keeps playing. busy_wait_* just polls the hardware timer, so it is
+// immune. core1 is a dedicated core; burning 150 ms busy-waiting is fine.
+static inline void oled_wait_ms(uint32_t ms) { busy_wait_us((uint64_t)ms * 1000u); }
+static inline void oled_wait_us(uint32_t us) { busy_wait_us(us); }
+
 // --- pins / bus ----------------------------------------------------------
 // GPIO0/1 were the UART debug log; master logging now goes over USB CDC
 // only (master/CMakeLists.txt: pico_enable_stdio_uart(master 0)), freeing
@@ -192,7 +203,7 @@ static void core1_main(void) {
                 s_oled_answered = true; // NOT printf -- see note by the decl
             } else {
                 oled_i2c_bring_up(); // clear a possible wedge, then wait and retry
-                sleep_ms(1000);
+                oled_wait_ms(1000);
                 continue;
             }
         }
@@ -233,7 +244,7 @@ static void core1_main(void) {
                 continue;
             }
         }
-        sleep_ms(150);
+        oled_wait_ms(150);
     }
 }
 
@@ -249,15 +260,15 @@ static void core1_main(void) {
 static void oled_i2c_bring_up(void) {
     gpio_init(OLED_SCL_PIN); gpio_set_dir(OLED_SCL_PIN, GPIO_OUT); gpio_put(OLED_SCL_PIN, 1);
     gpio_init(OLED_SDA_PIN); gpio_set_dir(OLED_SDA_PIN, GPIO_IN);  gpio_pull_up(OLED_SDA_PIN);
-    sleep_us(10);
+    oled_wait_us(10);
     for (int i = 0; i < 16 && !gpio_get(OLED_SDA_PIN); i++) {
-        gpio_put(OLED_SCL_PIN, 0); sleep_us(6);
-        gpio_put(OLED_SCL_PIN, 1); sleep_us(6);
+        gpio_put(OLED_SCL_PIN, 0); oled_wait_us(6);
+        gpio_put(OLED_SCL_PIN, 1); oled_wait_us(6);
     }
     // STOP condition: SDA low -> high while SCL is high.
-    gpio_set_dir(OLED_SDA_PIN, GPIO_OUT); gpio_put(OLED_SDA_PIN, 0); sleep_us(6);
-    gpio_put(OLED_SCL_PIN, 1); sleep_us(6);
-    gpio_put(OLED_SDA_PIN, 1); sleep_us(6);
+    gpio_set_dir(OLED_SDA_PIN, GPIO_OUT); gpio_put(OLED_SDA_PIN, 0); oled_wait_us(6);
+    gpio_put(OLED_SCL_PIN, 1); oled_wait_us(6);
+    gpio_put(OLED_SDA_PIN, 1); oled_wait_us(6);
     gpio_set_dir(OLED_SDA_PIN, GPIO_IN);
 
     i2c_init(OLED_I2C, OLED_I2C_HZ);

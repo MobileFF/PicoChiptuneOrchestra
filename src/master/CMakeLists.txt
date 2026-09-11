@@ -10,6 +10,7 @@ add_executable(master
     src/vgz_inflate.c
     src/ssd1306.c
     src/oled_ui.c
+    src/core_fault.c
     src/player_config.c
 )
 

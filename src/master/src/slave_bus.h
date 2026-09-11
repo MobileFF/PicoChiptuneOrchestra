@@ -33,4 +33,13 @@ void slave_bus_write(vgm_chip_id_t chip, uint8_t port, uint8_t reg, uint8_t data
 // Low-level send for opcodes other than WRITE0/WRITE1 (currently just the
 // SCC-only opcodes -- see protocol/vgm_spi_protocol.h).
 void slave_bus_send(vgm_chip_id_t chip, uint8_t opcode, uint8_t reg, uint8_t data);
+// Same, but always burst (whole frame under one CS assertion, ~7us) instead
+// of the chip's configured per-byte gap. Used for the YM2612 DAC control
+// frames (VGMSPI_OP_YM2612_DAC_*): they're rare enough (~450/s at most, see
+// vgm_player.c's checkpoint scheme) that the per-byte path's extra margin
+// isn't needed, and a dropped one is cheap to recover from (redundant sends
+// + the checkpoint protocol's own resync), unlike a dropped FM register
+// write. See vgm_spi_protocol.h and docs/design-notes.md's YM2612 DAC/PCM
+// section for why a plain per-command frame stream doesn't work here.
+void slave_bus_send_burst(vgm_chip_id_t chip, uint8_t opcode, uint8_t reg, uint8_t data);
 void slave_bus_mute_all(void);

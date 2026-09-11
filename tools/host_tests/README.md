@@ -47,15 +47,21 @@ gcc -O0 -g -Wall -I shim -I "$MASTER_SRC" -I "$PROTO" \
 /tmp/segapcm_block_hosttest   # prints "ok" and exits 0, or FAIL lines and exits 1
 ```
 
-## YM2612 PCM / DAC streaming (Mega Drive "PCM": 0x67 type-0 + 0x8n + 0xE0)
+## YM2612 PCM / DAC streaming (Mega Drive "PCM": checkpoint protocol)
 
 Builds its own recording slave_bus and a synthetic MD VGM, then asserts the
-type-0 PCM data block is uploaded byte-for-byte as `YM2612_PCM_BYTE` (after
-one `YM2612_PCM_RESET`), a run of `0x8n` commands emits `DAC_START` +
-`DAC_RATE`, a `0xE0` seek re-anchors the next run (with `DAC_SEEK` for the
->64 KB offset), every non-`0x8n` command ends a run with `DAC_STOP`, the
-`0x52 2B 80` DAC-enable write is still forwarded normally, and the parser
-stays in sync. Self-contained -- takes no argument.
+type-0 PCM data block is uploaded byte-for-byte as `YM2612_PCM_BYTE` (with a
+`YM2612_PCM_RESET` re-anchor -- absolute cursor >> 2 -- at song start and
+every 128 bytes during the upload), a run of `0x8n` commands emits
+`DAC_SEEK`+`DAC_START` (absolute position) and `DAC_RATE` (a rate seed from
+the run's first `0x8n` wait) at the run start, one `DAC_SYNC` checkpoint
+(position >> 2) every `DAC_SYNC_EVERY` (32) `0x8n` commands -- NOT one frame
+per `0x8n` -- a `0xE0` seek re-anchors the next run (with `DAC_SEEK` for the
+>64 KB offset high byte), the `0x52 2B 80` DAC-enable write is still
+forwarded normally, and the parser stays in sync. Self-contained -- takes no
+argument. See `docs/design-notes.md`'s YM2612 DAC/PCM section for why this
+replaced an earlier one-frame-per-`0x8n` design (SPI bandwidth, click/
+decimation, and boot-race failure modes it couldn't avoid).
 
 ```sh
 gcc -O0 -g -Wall -I shim -I "$MASTER_SRC" -I "$PROTO" \

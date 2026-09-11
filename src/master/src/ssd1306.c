@@ -54,7 +54,11 @@ bool ssd1306_init(i2c_inst_t *i2c, uint8_t addr) {
     // this runs very early in boot (before the SD mount). Wait, then retry a
     // few times rather than disabling the display on one transient miss.
     for (int attempt = 0; attempt < 5; attempt++) {
-        sleep_ms(attempt == 0 ? 100 : 25);
+        // busy_wait, not sleep_ms: this runs on core1 and sleep_ms there
+        // depends on core0 servicing the default alarm pool's timer IRQ,
+        // which can stall for a long time during SD/SPI-heavy boot -- see
+        // the note in oled_ui.c.
+        busy_wait_us((attempt == 0 ? 100u : 25u) * 1000u);
         if (cmd(seq, sizeof(seq))) {
             ssd1306_clear();
             ssd1306_show();

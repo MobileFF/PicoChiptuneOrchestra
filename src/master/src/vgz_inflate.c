@@ -51,7 +51,16 @@ bool vgz_inflate_file(const char *src_path, const char *dst_path) {
 
     static uint8_t s_dict[TINFL_LZ_DICT_SIZE];
     static uint8_t s_in[1024];
-    tinfl_decompressor decomp;
+    // MUST be static: sizeof(tinfl_decompressor) is ~8 KB (three 1024-entry
+    // Huffman fast-lookup tables + trees). core0's stack is only 2 KB, so a
+    // stack-local here overflows it by ~6 KB -- straight down through
+    // SCRATCH_Y into SCRATCH_X, which holds *core1's* stack. That silently
+    // corrupted core1's OLED render loop mid-wait (a stacked return address
+    // got overwritten with Huffman table bytes -> HardFault on the next
+    // function return -> panel frozen on "starting..." while audio played
+    // on). vgz_inflate_file() only ever runs on core0's playlist loop and is
+    // never reentrant, so one shared instance is fine.
+    static tinfl_decompressor decomp;
     tinfl_init(&decomp);
 
     size_t in_avail = 0, in_pos = 0;

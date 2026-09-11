@@ -164,6 +164,15 @@ void slave_spi_rx_run(uint spi_index, uint pin_sck, uint pin_mosi, uint pin_cs,
         RX_TRACE(data, false);
 #endif
         uint32_t event = ((uint32_t)opcode << 16) | ((uint32_t)reg << 8) | data;
-        multicore_fifo_push_blocking(event);
+        // NON-blocking: if the inter-core FIFO is full (core1 momentarily
+        // behind, or not draining yet during its own boot), DROP this frame
+        // rather than stall here. A stall stops us reading spi->dr, so the
+        // hardware's 8-byte RX FIFO overflows and loses BYTES -- which shifts
+        // every following byte and mis-decodes the rest of the run (a lost
+        // whole frame is instead recoverable: the master repeats RESET /
+        // PCM_RESET / DAC_START and re-anchors the PCM upload every 128 B).
+        // The deterministic "first play after power-on drops the opening PCM
+        // voice" was this overflow during the long first bank upload.
+        (void)multicore_fifo_push_timeout_us(event, 0);
     }
 }

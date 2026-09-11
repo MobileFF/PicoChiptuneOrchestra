@@ -29,10 +29,11 @@ void ym2612_reset(uint8_t clock_preset);
 // Ports 20-25 carry the YM2612 PCM/DAC-streaming opcodes (not real chip
 // ports -- see slave_engine.c and VGMSPI_OP_YM2612_* in
 // protocol/vgm_spi_protocol.h): 20 = PCM bank upload-cursor reset, 21 =
-// upload one bank byte (data), 22 = DAC_START (reg:data = read offset
-// [15:0]), 23 = DAC_RATE (reg:data = bytes-per-sample * 65536), 24 =
-// DAC_STOP, 25 = DAC_SEEK (data = read offset [23:16], latched for the next
-// DAC_START).
+// upload one bank byte (data), 22 = DAC_START (reg:data = absolute read
+// position [15:0], snapped), 23 = DAC_SYNC (reg:data = master position >> 2 --
+// re-derive rate + phase-lock), 24 = DAC_STOP, 25 = DAC_SEEK (data = read
+// offset [23:16], latched for the next DAC_START), 26 = DAC_RATE (reg:data =
+// seed playback rate, 16.16 bytes/output-sample, for a run's opening ~2ms).
 void ym2612_write(uint8_t port, uint8_t reg, uint8_t data);
 int16_t ym2612_render(void);
 // NTSC (preset 0, 7670454 Hz) vs PAL (preset 1, 7600489 Hz) Genesis --

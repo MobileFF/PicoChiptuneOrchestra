@@ -119,6 +119,7 @@ void slave_bus_set_clock(vgm_chip_id_t c, uint8_t preset) {
 void slave_bus_send(vgm_chip_id_t c, uint8_t opcode, uint8_t reg, uint8_t data) {
     (void)c; (void)opcode; (void)reg; (void)data;
 }
+void slave_bus_send_burst(vgm_chip_id_t c, uint8_t op, uint8_t r, uint8_t d) { (void)c; (void)op; (void)r; (void)d; }
 void slave_bus_mute_all(void) {}
 
 // --- WAV out -----------------------------------------------------------------

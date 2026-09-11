@@ -19,6 +19,7 @@
 #include "vgm_player.h"
 #include "vgz_inflate.h"
 #include "oled_ui.h"
+#include "core_fault.h"
 #include "player_config.h"
 
 #define PIN_BTN_SKIP 2 // to GND; internal pull-up enabled
@@ -34,6 +35,33 @@ static bool has_extension(const char *name, const char *ext) {
 
 static bool poll_skip_button(void) {
     return !gpio_get(PIN_BTN_SKIP);
+}
+
+// OLED render-loop + core1/core0 fault health check, done here on core0
+// (core1 mustn't printf -- see oled_ui.c). Silent unless something looks
+// wrong (a HardFault was caught, the panel never answered, a push failed, or
+// the loop had to re-init a wedged panel), so normal operation doesn't spam
+// the log with a per-song line -- see core_fault.h and docs/design-notes.md
+// for the HardFault this caught once (a core0 stack overflow corrupting
+// core1's stack, fixed in vgz_inflate.c).
+static void oled_health_check(void) {
+    if (g_core_fault.count) {
+        printf("  *** core%u FAULT vect=%u count=%lu pc=%08lx lr=%08lx psr=%08lx\n",
+               g_core_fault.core, g_core_fault.vect, (unsigned long)g_core_fault.count,
+               (unsigned long)g_core_fault.pc, (unsigned long)g_core_fault.lr,
+               (unsigned long)g_core_fault.psr);
+        printf("      r0=%08lx r1=%08lx r2=%08lx r3=%08lx r12=%08lx\n",
+               (unsigned long)g_core_fault.r0, (unsigned long)g_core_fault.r1,
+               (unsigned long)g_core_fault.r2, (unsigned long)g_core_fault.r3,
+               (unsigned long)g_core_fault.r12);
+    }
+    uint32_t frames = 0, ok = 0, fail = 0, reinits = 0;
+    oled_ui_diag(&frames, &ok, &fail, &reinits);
+    if (!oled_ui_answered() || fail > 0 || reinits > 0) {
+        printf("  OLED: answered=%d frames=%lu shows_ok=%lu shows_fail=%lu reinits=%lu\n",
+               (int)oled_ui_answered(), (unsigned long)frames, (unsigned long)ok,
+               (unsigned long)fail, (unsigned long)reinits);
+    }
 }
 
 // Playable filenames for one pass are collected into s_names (NUL-terminated,
@@ -95,12 +123,6 @@ static bool play_one(const char *dir_path, const char *fname) {
 
     printf("playing: %s\n", fname);
     oled_ui_set_song(fname);
-    // OLED health, logged here on core0 (core1 mustn't printf -- see oled_ui.c).
-    { uint32_t fr = 0, ok = 0, fl = 0, ri = 0;
-      oled_ui_diag(&fr, &ok, &fl, &ri);
-      printf("  OLED: answered=%d frames=%lu shows_ok=%lu shows_fail=%lu reinits=%lu\n",
-             (int)oled_ui_answered(), (unsigned long)fr, (unsigned long)ok,
-             (unsigned long)fl, (unsigned long)ri); }
     vgm_player_opts_t opts = {
         .loop_enabled = true,
         .max_loops = 2, // play a looping song's loop section twice, then end
@@ -112,10 +134,7 @@ static bool play_one(const char *dir_path, const char *fname) {
     if (!vgm_player_play(play_path, &opts)) {
         printf("  ERROR: playback aborted (bad/unsupported VGM data)\n");
     }
-    { uint32_t fr = 0, ok = 0, fl = 0, ri = 0;
-      oled_ui_diag(&fr, &ok, &fl, &ri);
-      printf("  OLED after: frames=%lu shows_ok=%lu shows_fail=%lu reinits=%lu\n",
-             (unsigned long)fr, (unsigned long)ok, (unsigned long)fl, (unsigned long)ri); }
+    oled_health_check();
     sleep_ms(2000); // pause between songs so the next one doesn't start instantly
     return true;
 }
@@ -148,11 +167,6 @@ int main(void) {
     gpio_pull_up(PIN_BTN_SKIP);
 
     oled_ui_init(); // I2C0 on GPIO0/1 + core1 render loop (no-op if no panel)
-    // Give the OLED (if present) a moment to show the title/"starting..."
-    // screen before the first song's filename overwrites it -- without this,
-    // SD mount + config load + slave_bus_init are fast enough that playback
-    // starts near-instantly and the boot screen is never actually seen.
-    sleep_ms(1000);
 
     static FATFS fs;
     if (f_mount(&fs, "0:", 1) != FR_OK) {
@@ -169,6 +183,25 @@ int main(void) {
 
     slave_bus_init();
     printf("slave bus initialized\n");
+
+    // Slave settle window. Each slave board powers on independently and only
+    // its own clock/vreg settle + core1 launch + SPI-RX sync gates when it
+    // starts hearing the bus. The master can reach here (SD mount + playlist
+    // scan) faster than a slave finishes booting -- and the FIRST song's
+    // one-shot setup, notably the YM2612 PCM bank upload (never re-sent),
+    // then goes out to a slave that isn't listening yet, leaving that chip's
+    // PCM silent for the whole first song. Non-deterministic across power-ups
+    // because the two boot times race. Hold here, re-broadcasting RESET as
+    // clean sync points, so any slave that boots within the window is synced
+    // and reset before playback. (preset 0 here; the real per-song preset is
+    // sent by vgm_player_play and re-asserted once a second during playback.)
+    for (int i = 0; i < 8; i++) {
+        for (int c = 0; c < VGM_CHIP_COUNT; c++)
+            if (slave_bus_has_chip((vgm_chip_id_t)c))
+                slave_bus_reset((vgm_chip_id_t)c, 0);
+        sleep_ms(250);
+    }
+    printf("slave settle window done\n");
 
     const char *dir_path = "0:";
     for (;;) {

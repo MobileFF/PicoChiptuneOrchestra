@@ -36,6 +36,10 @@ void slave_bus_send(vgm_chip_id_t chip, uint8_t opcode, uint8_t reg, uint8_t dat
     printf("SEND   %-8s opcode=0x%02X reg=0x%02X data=0x%02X\n", chip_name(chip), opcode, reg, data);
 }
 
+void slave_bus_send_burst(vgm_chip_id_t chip, uint8_t opcode, uint8_t reg, uint8_t data) {
+    slave_bus_send(chip, opcode, reg, data);
+}
+
 void slave_bus_mute_all(void) {
     printf("MUTE all\n");
 }

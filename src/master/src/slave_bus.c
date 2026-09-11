@@ -223,6 +223,11 @@ void slave_bus_send(vgm_chip_id_t chip, uint8_t opcode, uint8_t reg, uint8_t dat
     send_frame(s_routes[chip].cs_gpio, s_routes[chip].gap_us, opcode, reg, data);
 }
 
+void slave_bus_send_burst(vgm_chip_id_t chip, uint8_t opcode, uint8_t reg, uint8_t data) {
+    if (!slave_bus_has_chip(chip)) return;
+    send_frame(s_routes[chip].cs_gpio, 0 /* force burst -- see header */, opcode, reg, data);
+}
+
 void slave_bus_mute_all(void) {
     for (int i = 0; i < VGM_CHIP_COUNT; i++) {
         if (!s_routes[i].present) continue;
