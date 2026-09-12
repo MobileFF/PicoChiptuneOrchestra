@@ -20,3 +20,10 @@ tools/offline_render/*.wav
 # bring-up logs. Not this project's own work and never intended for the
 # public repo — see the copyright discussion in this session.
 調査用/
+
+# One-off diagnostic / rule-out / bring-up builds (VERBOSE, RXTRACE, isolation
+# builds for tracking down a specific bug, ...). Keep them out of the repo --
+# place them here to hand to the user, but they're throwaway by nature and
+# shouldn't accumulate in git history. firmware/pico1/ and firmware/pico2/
+# are the real shipped firmware and stay tracked normally.
+firmware/debug/
