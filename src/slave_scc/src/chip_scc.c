@@ -2,12 +2,14 @@
 #include <string.h>
 #include <stdbool.h>
 
-// Same idea as chip_ay8910.c's AY8910_LEVEL_SLEW_HZ: one-pole smoothing of
-// each channel's volume before it multiplies the waveform sample, instead
-// of the instant step every VGMSPI_OP_SCC_VOLUME write (this song alone
-// does ~5100 of those -- a software envelope, ~19Hz of stepped volume)
-// otherwise applies. 0 (default) = OFF, byte-identical to the original.
-// Prototyping hook -- see tools/offline_render/ and docs/design-notes.md.
+// Per-channel analogue of chip_ay8910.c's old AY8910_LEVEL_SLEW_HZ (since
+// replaced there by a post-mix filter, AY8910_OUTPUT_LPF_HZ -- see that
+// file's comment for why): one-pole smoothing of each channel's volume
+// before it multiplies the waveform sample, instead of the instant step
+// every VGMSPI_OP_SCC_VOLUME write (this song alone does ~5100 of those --
+// a software envelope, ~19Hz of stepped volume) otherwise applies. 0
+// (default) = OFF, byte-identical to the original. Prototyping hook -- see
+// tools/offline_render/ and docs/design-notes.md.
 #ifndef SCC_VOLUME_SLEW_HZ
 #define SCC_VOLUME_SLEW_HZ 0
 #endif

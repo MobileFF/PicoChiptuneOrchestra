@@ -7,10 +7,14 @@ result against a reference recording numerically.
 
 Born from the "04 Hot Summer Riding" investigation (`docs/design-notes.md`
 §5, memory `project_hot_summer_riding_tempo`): a listener heard the AY part
-lagging the SCC around 0:09. Every firmware timing path measured clean; this
-rig proved tempo/timing were exact vs the original recording, and localised
-the real cause to the AY envelope's instant-step re-attack being harder than
-real hardware → `AY8910_LEVEL_SLEW_HZ`.
+lagging the SCC around 0:09. Every firmware timing path measured clean (this
+rig itself, plus the master's [LAG] trace and both slaves' RATE CHECK on
+real hardware) -- tempo/timing are exact. The still-unresolved suspicion is
+that the AY envelope's instant-step re-attack sounds harder than real
+hardware in a busy passage; three per-channel-level smoothing attempts
+(`AY8910_LEVEL_SLEW_HZ`, since replaced by a post-mix filter,
+`AY8910_OUTPUT_LPF_HZ` -- see chip_ay8910.c) made no confirmed difference on
+real hardware, so this remains open.
 
 ## render_wav.c / run.sh
 
@@ -24,12 +28,13 @@ tools/offline_render/run.sh "調査用/04 Hot Summer Riding.vgm" /tmp/hr 40
 clock: every `wait_samples()` in `vgm_player.c` renders exactly that many
 samples through `ay8910_render()` / `scc_render()`.
 
-To sweep the level-slew hooks, build directly with the defines:
+To sweep the AY output filter / SCC volume slew hooks, build directly with
+the defines:
 
 ```sh
 cc -O2 -w -I tools/offline_render/shim -I tools/host_tests/shim \
    -I src/master/src -I src/protocol -I src/slave_ay8910/src -I src/slave_scc/src \
-   -DAY8910_LEVEL_SLEW_HZ=10 -DSCC_VOLUME_SLEW_HZ=0 \
+   -DAY8910_OUTPUT_LPF_HZ=3000 -DSCC_VOLUME_SLEW_HZ=0 \
    tools/offline_render/render_wav.c src/master/src/vgm_player.c src/master/src/vgm_chips.c \
    src/slave_ay8910/src/chip_ay8910.c src/slave_scc/src/chip_scc.c -lm -o /tmp/render_slew
 ```

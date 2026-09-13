@@ -291,7 +291,19 @@ void slave_audio_engine_run(const chip_ops_t *ops, uint audio_pin, const char *c
                    (unsigned long)reset_rx);
             rate_check_samples = 0;
             rate_check_fell_behind = 0;
-            rate_check_start = rc_now;
+            // Take the next window's start timestamp AFTER printf() returns,
+            // not before (rc_now, above, was captured before the call).
+            // printf() here goes out over UART too (115200 baud), and that
+            // path is a blocking write -- a ~100-byte line costs roughly
+            // (100*10 bits)/115200 =~ 8-9ms of real, CPU-stalling time. Using
+            // rc_now as the next window's start folded that whole stall into
+            // the NEXT window's reported elapsed_us, making the render loop
+            // look ~1% slower than it actually runs (2026-09-13: this is
+            // what a 250 MHz overclock's fell_behind=~1 with elapsed_us
+            // barely changed was actually showing -- the CPU had headroom to
+            // spare, but the printf's own transmission time was being
+            // charged to the measurement, not to the render loop).
+            rate_check_start = get_absolute_time();
         }
 #endif
     }

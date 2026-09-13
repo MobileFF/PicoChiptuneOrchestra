@@ -22,9 +22,9 @@ import sys
 CHIPS = [
     ("sn76489", "SN76489",   12, None),
     ("ym2612",  "YM2612",    13, None),
-    ("ay8910",  "AY-3-8910", 14, 80),
+    ("ay8910",  "AY-3-8910", 14, 120),
     ("ym2413",  "YM2413",    15, None),
-    ("ym2151",  "YM2151",    20, 120),
+    ("ym2151",  "YM2151",    20, 0),
     ("ym2203",  "YM2203",    21, None),
     ("scc",     "SCC",       22, None),
     ("segapcm", "SegaPCM",   26, None),
@@ -285,7 +285,10 @@ def run_gui(initial_path=None):
             row=i, column=2, padx=6, pady=2)
         ttk.Entry(grid, width=7, textvariable=gap).grid(row=i, column=3, padx=6, pady=2)
         dg = DEFAULT_GAP[chip]
-        hint = f"default gap {dg}" if dg else "default gap 40"
+        # `dg` can legitimately be 0 (YM2151's burst default) -- must check
+        # "is not None", not truthiness, or 0 falls through to the wrong
+        # "default gap 40" branch below.
+        hint = f"default gap {dg}" if dg is not None else "default gap 40"
         ttk.Label(grid, text=f"(blank = {hint})", foreground="#777").grid(
             row=i, column=4, padx=6, pady=2, sticky="w")
 

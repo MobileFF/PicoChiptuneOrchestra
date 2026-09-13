@@ -7,7 +7,7 @@ target_link_libraries(slave_ay8910 PRIVATE slave_common)
 
 target_compile_definitions(slave_ay8910 PRIVATE
     VGM_RP2040_SYSCLK_KHZ=${VGM_RP2040_SYSCLK_KHZ}
-    AY8910_LEVEL_SLEW_HZ=${VGM_AY8910_LEVEL_SLEW_HZ}
+    AY8910_OUTPUT_LPF_HZ=${VGM_AY8910_OUTPUT_LPF_HZ}
 )
 
 pico_enable_stdio_uart(slave_ay8910 1)

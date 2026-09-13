@@ -2,20 +2,37 @@
 #include <string.h>
 #include <stdbool.h>
 
-// One-pole smoothing of each channel's audio-domain output level before
-// mixing, instead of the instant step every envelope tick / level register
-// write otherwise applies. 0 (default) = OFF, byte-identical to the
-// original instant-step behaviour -- this is a prototyping hook for the
-// "Hot Summer Riding" investigation (see tools/offline_render/ and
-// docs/design-notes.md): the raw instant-step output attacks harder than a
-// reference recording of the real track (measured as extra onset density in
-// a busy passage). NOT enabled in shipped firmware; set via
-// -DAY8910_LEVEL_SLEW_HZ=<hz> to sweep it offline before considering
-// whether/how to turn it on for real.
-#ifndef AY8910_LEVEL_SLEW_HZ
-#define AY8910_LEVEL_SLEW_HZ 0
+// One-pole low-pass on the chip's final MIXED output, applied once per
+// sample after all 3 channels are summed -- NOT per-channel level smoothing.
+// History (see docs/design-notes.md and CMakeLists.txt for the full trail):
+// the very first "Hot Summer Riding" fix (2026-09-02) smoothed each
+// channel's GATED waveform (`active ? VOL_TABLE[lvl] : 0`) at 10 Hz. That
+// wasn't a deliberate envelope-articulation filter at all -- because 10 Hz
+// can't track a tone/noise gate flipping at audio rate (e.g. 750 Hz), it
+// acted as an accidental, aggressive low-pass on the WHOLE per-channel
+// waveform, and badly attenuated higher-pitched tones on another song
+// (調査用/01 Start Music.vgm, 2026-09-12: a ~750/530 Hz tone came out at
+// 1/6-1/4 its correct level). Fixing that (smooth the level value, gate
+// instantly) and later trying to target just envelope-mode channels or just
+// decaying steps (2026-09-13) both turned out to remove exactly the effect
+// that made the original version soften Hot Summer Riding's busy AY
+// passage in the first place -- neither made any audible difference there.
+// Rather than chase that per-channel accident, this smooths the chip's
+// already-mixed output directly: same "round off harsh edges" effect the
+// original bug produced, but on the actual audio signal, at a cutoff high
+// enough to sit above legitimate note fundamentals (so it doesn't repeat
+// the tone-attenuation bug) while still taming fast, click-like transients.
+// 0 = off, byte-identical to the un-filtered mix. Shipped default is 3000
+// Hz (CMakeLists.txt cache variable VGM_AY8910_OUTPUT_LPF_HZ) --
+// hardware-confirmed 2026-09-14 to fix most of Hot Summer Riding without
+// hurting 01 Start Music's attack. One passage (0:09.5-0:27 of Hot Summer
+// Riding) still doesn't match the original recording; see
+// docs/design-notes.md §5 for that open item and everything already ruled
+// out for it.
+#ifndef AY8910_OUTPUT_LPF_HZ
+#define AY8910_OUTPUT_LPF_HZ 0
 #endif
-#if AY8910_LEVEL_SLEW_HZ > 0
+#if AY8910_OUTPUT_LPF_HZ > 0
 #include <math.h>
 #endif
 
@@ -67,9 +84,9 @@ typedef struct {
     uint32_t tick_rem;   // remainder numerator, denom = CLOCK_TICK_DIV*sample_rate_hz
     uint32_t tick_frac_acc;
 
-#if AY8910_LEVEL_SLEW_HZ > 0
-    float level_smooth[3]; // per-channel smoothed VOL_TABLE value
-    float level_alpha;
+#if AY8910_OUTPUT_LPF_HZ > 0
+    float out_smooth; // one-pole state, post-mix
+    float out_alpha;
 #endif
 } ay8910_state_t;
 
@@ -102,9 +119,9 @@ void ay8910_reset(uint8_t clock_preset) {
     st.mixer = 0xFF; // all tone+noise disabled at power-on
     for (int ch = 0; ch < 3; ch++) st.period[ch] = 1;
     st.lfsr = 1;
-#if AY8910_LEVEL_SLEW_HZ > 0
-    st.level_alpha = 1.0f - expf(-2.0f * 3.14159265f *
-                                  (float)AY8910_LEVEL_SLEW_HZ / (float)st.sample_rate_hz);
+#if AY8910_OUTPUT_LPF_HZ > 0
+    st.out_alpha = 1.0f - expf(-2.0f * 3.14159265f *
+                                (float)AY8910_OUTPUT_LPF_HZ / (float)st.sample_rate_hz);
 #endif
 }
 
@@ -213,18 +230,20 @@ int16_t ay8910_render(void) {
         uint8_t tv = tone_on ? st.out[ch] : 1;
         uint8_t nv = noise_on ? st.noise_out : 1;
         bool active = (tv & nv) != 0;
-#if AY8910_LEVEL_SLEW_HZ > 0
-        uint8_t lvl = (st.level[ch] & 0x10) ? env_level() : (st.level[ch] & 0x0F);
-        float target = active ? (float)VOL_TABLE[lvl] : 0.0f;
-        st.level_smooth[ch] += st.level_alpha * (target - st.level_smooth[ch]);
-        mix += (int32_t)(st.level_smooth[ch] + (st.level_smooth[ch] < 0 ? -0.5f : 0.5f));
-#else
         if (!active) continue;
         uint8_t lvl = (st.level[ch] & 0x10) ? env_level() : (st.level[ch] & 0x0F);
         mix += VOL_TABLE[lvl];
-#endif
     }
+#if AY8910_OUTPUT_LPF_HZ > 0
+    // Post-mix, not per-channel -- see the comment at AY8910_OUTPUT_LPF_HZ's
+    // definition for why. This runs on the actual summed audio signal, so
+    // unlike the old per-channel attempts, its cutoff has to sit above real
+    // note fundamentals rather than in the ~10 Hz envelope-step range.
+    st.out_smooth += st.out_alpha * ((float)mix - st.out_smooth);
+    return (int16_t)(st.out_smooth + (st.out_smooth < 0 ? -0.5f : 0.5f));
+#else
     return (int16_t)mix;
+#endif
 }
 
 uint32_t ay8910_sample_rate_hz(uint8_t clock_preset) {

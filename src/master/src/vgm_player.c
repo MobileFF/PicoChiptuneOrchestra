@@ -742,6 +742,18 @@ bool vgm_player_play(const char *path, const vgm_player_opts_t *opts) {
                                (unsigned)(((uint16_t)s_ep_hi << 8) | s_ep_lo));
                 }
 #endif
+                // 2x: this link still drops the occasional frame even at its
+                // widened gap (see slave_bus.c), and a lost register write
+                // during a song's opening zero-wait setup burst (mixer + all
+                // 3 channels' tone/level, ~15 writes with no wait between
+                // them) leaves whichever channel it belonged to silent or
+                // mistuned for its ENTIRE first note -- nothing else corrects
+                // it until the next note's fresh writes. Redundant sends are
+                // idempotent (same reg/data) so this is free of side effects;
+                // AY8910's write rate is low enough overall (a few dozen/sec
+                // even in busy songs) that doubling it stays well inside the
+                // real-time budget. See docs/design-notes.md, 2026-09-13.
+                slave_bus_write(VGM_CHIP_AY8910, 0, (uint8_t)(aa & 0x0F), (uint8_t)dd);
                 slave_bus_write(VGM_CHIP_AY8910, 0, (uint8_t)(aa & 0x0F), (uint8_t)dd);
                 break;
             }

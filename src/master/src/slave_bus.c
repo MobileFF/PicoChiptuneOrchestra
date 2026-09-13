@@ -36,7 +36,16 @@ static struct {
 } s_routes[VGM_CHIP_COUNT] = {
     [VGM_CHIP_SN76489] = {.present = true, .cs_gpio = 12, .gap_us = GAP_US_DEFAULT},
     [VGM_CHIP_YM2612]  = {.present = true, .cs_gpio = 13, .gap_us = GAP_US_DEFAULT},
-    [VGM_CHIP_AY8910]  = {.present = true, .cs_gpio = 14, .gap_us = 80}, // needed extra margin, see above
+    [VGM_CHIP_AY8910]  = {.present = true, .cs_gpio = 14, .gap_us = 120}, // needed extra margin, see above; raised
+    // 80->120 (2026-09-12): a song's opening burst of ~15 zero-wait register
+    // writes (mixer + 3 channels' tone/level) sets up its first note, and a
+    // dropped/corrupted one there leaves that first note wrong for its whole
+    // duration (nothing else corrects it until the second note's writes) --
+    // measured on 調査用/01 Start Music.vgm's first ~0.3s. 120 alone narrowed
+    // the corrupted window but didn't clear it; the actual fix was making
+    // every 0xA0 write redundant (2x, see vgm_player.c) -- hardware-confirmed
+    // clean across 01 Start Music and ~10 other songs, power cycles included
+    // (2026-09-13).
     [VGM_CHIP_YM2413]  = {.present = true, .cs_gpio = 15, .gap_us = GAP_US_DEFAULT},
     [VGM_CHIP_YM2151]  = {.present = true, .cs_gpio = 20, .gap_us = 0}, // 0 = BURST (whole frame under one CS assertion, ~6us). FM-dense music (OutRun, ~30-write bursts inside one 22us VGM wait) can't be delivered by the per-byte-CS path in time -- the master falls seconds behind and rushes -> wrong pitch/tempo. Raising gap made it WORSE. Burst is only reliable because the bus now runs SPI mode 1 (CPHA=1); see slave_bus_init() / send_frame(). vgmplay.ini can override to a nonzero gap if this link ever proves marginal.
     [VGM_CHIP_YM2203]  = {.present = true, .cs_gpio = 21, .gap_us = GAP_US_DEFAULT},

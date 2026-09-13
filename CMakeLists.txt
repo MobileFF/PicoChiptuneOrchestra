@@ -80,21 +80,35 @@ set(VGM_YM2151_VREG_MV 1150 CACHE STRING
 set(VGM_RP2040_SYSCLK_KHZ 0 CACHE STRING
     "set_sys_clock_khz value for the RP2040 AY-3-8910/SCC slave builds; 0 = SDK default")
 
-# One-pole smoothing of each channel's output level (AY envelope/register
-# level, SCC volume register) instead of the instant per-sample step the
-# emulators otherwise apply. From the "Hot Summer Riding" investigation
-# (tools/offline_render/, docs/design-notes.md): a software A/B against a
-# reference recording found the instant-step output attacked harder (~1.5x
-# the onset density in a busy passage) than the real track, heard as the AY
-# melody articulating late against the other chip. ~5-15 Hz roughly halves
-# that gap; 10 Hz on real hardware removed the perceived AY lag entirely
-# (user-confirmed 2026-09-02) with no downside on the AY.
+# One-pole low-pass on the AY-3-8910's final MIXED output (see the comment
+# at AY8910_OUTPUT_LPF_HZ's definition in chip_ay8910.c for the full "Hot
+# Summer Riding" investigation history -- three earlier per-channel-level
+# attempts, dated 2026-09-02/12/13, are documented there and in git history
+# on this file rather than repeated here). Short version: the original
+# "fix" smoothed each channel's gated waveform at 10 Hz, which only helped
+# by accident (it couldn't track audio-rate tone toggling, so it acted as an
+# unintentional aggressive low-pass and badly attenuated another song's
+# higher-pitched tones); two later attempts to target just the envelope
+# generator or just decaying steps, to avoid that bug, both turned out to
+# remove the very thing that made the original version soften Hot Summer
+# Riding's busy passage, and neither was audible on real hardware. This
+# variable instead filters the chip's already-mixed audio output directly,
+# at a cutoff meant to sit above real note fundamentals so it can't repeat
+# the tone-attenuation bug. 0 = off (byte-identical to unfiltered).
 #
-# AY defaults ON at 10 Hz. SCC defaults OFF (0): its output already matched
-# the reference, and 10 Hz there slightly altered the SCC timbre away from
-# the original (user-confirmed). 0 = byte-identical to the pre-slew emulator.
-set(VGM_AY8910_LEVEL_SLEW_HZ 10 CACHE STRING
-    "one-pole smoothing (Hz) of AY-3-8910 per-channel output level; 0 = off/instant")
+# 3000 Hz is the shipped default, hardware-confirmed 2026-09-14 on 調査用/04
+# Hot Summer Riding.vgm (the song this was written for) and 調査用/01 Start
+# Music.vgm (the song the earlier per-channel attempts broke): most of Hot
+# Summer Riding now matches the original recording, and 01 Start Music's
+# hard attack is intact. One passage in Hot Summer Riding (0:09.5-0:27,
+# where the AY's second voice is unusually busy) still doesn't match --
+# every timing/reliability path was re-checked and ruled out for that
+# specific passage (see docs/design-notes.md §5 for the full trail); it's
+# tracked there as a known open issue, deliberately not chased further for
+# now. Sweep with -DAY8910_OUTPUT_LPF_HZ=<hz> via tools/offline_render/
+# before trying a different value on real hardware.
+set(VGM_AY8910_OUTPUT_LPF_HZ 3000 CACHE STRING
+    "one-pole low-pass (Hz) on AY-3-8910's final mixed output; 0 = off/unfiltered")
 set(VGM_SCC_VOLUME_SLEW_HZ 0 CACHE STRING
     "one-pole smoothing (Hz) of SCC per-channel volume; 0 = off/instant (default)")
 
