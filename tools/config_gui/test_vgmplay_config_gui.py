@@ -39,11 +39,37 @@ def test_firmware_template():
         s, notes = g.parse_ini(f.read())
     assert notes == [], notes
     expected = g.default_rows()
-    expected["ay8910"]["gap"] = 80
-    expected["ym2151"]["gap"] = 120
+    expected["ay8910"]["gap"] = 120
+    expected["ym2151"]["gap"] = 0
     assert g.rows_from_settings(s) == expected
     out = g.generate_ini(expected)
-    assert "gap     = 80" in out and "gap     = 120" in out
+    assert "gap     = 120" in out and "gap     = 0" in out
+
+
+def test_volume_roundtrip_and_aliases():
+    rows = g.default_rows()
+    rows["ay8910"]["volume"] = 50
+    s, notes = g.parse_ini(g.generate_ini(rows))
+    assert notes == []
+    assert g.rows_from_settings(s) == rows
+
+    s2, _ = g.parse_ini("[ay8910]\nvol = 75\n")
+    assert g.rows_from_settings(s2)["ay8910"]["volume"] == 75
+
+
+def test_shuffle_roundtrip_and_aliases():
+    rows = g.default_rows()
+    assert rows[g.PLAYER_SECTION]["shuffle"] is False  # default
+
+    rows[g.PLAYER_SECTION]["shuffle"] = True
+    s, notes = g.parse_ini(g.generate_ini(rows))
+    assert notes == []
+    assert g.rows_from_settings(s) == rows
+
+    # section-name normalisation, and an unknown key inside [player]
+    s2, notes2 = g.parse_ini("[ Player ]\nSHUFFLE = on\nwobble = 1\n")
+    assert g.rows_from_settings(s2)[g.PLAYER_SECTION]["shuffle"] is True
+    assert any("unknown key 'wobble' in [player]" in n for n in notes2)
 
 
 def test_aliases_and_normalisation():
@@ -78,20 +104,24 @@ def test_notes_on_bad_input():
 
 def test_validate():
     e, w = g.validate({**g.default_rows(),
-                       "scc": {"enabled": True, "cs": 12, "gap": None}})
+                       "scc": {"enabled": True, "cs": 12, "gap": None, "volume": None}})
     assert e == [] and any("also used by" in x for x in w)
 
     e, _ = g.validate({**g.default_rows(),
-                       "scc": {"enabled": True, "cs": 40, "gap": None}})
+                       "scc": {"enabled": True, "cs": 40, "gap": None, "volume": None}})
     assert any("out of range" in x for x in e)
 
     _, w = g.validate({**g.default_rows(),
-                       "scc": {"enabled": True, "cs": 18, "gap": None}})
+                       "scc": {"enabled": True, "cs": 18, "gap": None, "volume": None}})
     assert any("SD card" in x for x in w)
 
     # a disabled chip does not trip collision/reserved warnings
     _, w = g.validate({**g.default_rows(),
-                       "scc": {"enabled": False, "cs": 12, "gap": None}})
+                       "scc": {"enabled": False, "cs": 12, "gap": None, "volume": None}})
+
+    e, _ = g.validate({**g.default_rows(),
+                       "scc": {"enabled": True, "cs": 22, "gap": None, "volume": 300}})
+    assert any("out of range (0-255)" in x for x in e)
     assert not any("also used by" in x for x in w)
 
 

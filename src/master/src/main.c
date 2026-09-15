@@ -1,8 +1,9 @@
 // VGM multi-MCU player -- master firmware (Raspberry Pi Pico).
 //
 // Mounts the SD card, plays every .vgm/.vgz file in the root directory in
-// case-insensitive sorted order (looping the whole list forever),
-// dispatching register writes to the slave boards over slave_bus. See
+// case-insensitive sorted order (looping the whole list forever) or, if
+// vgmplay.ini's [player] shuffle = yes, in a freshly-randomised order each
+// pass, dispatching register writes to the slave boards over slave_bus. See
 // docs/circuit.md for wiring and docs/design-notes.md for VGM command
 // coverage.
 #include <stdio.h>
@@ -12,6 +13,7 @@
 #include <strings.h>
 
 #include "pico/stdlib.h"
+#include "pico/rand.h"
 #include "ff.h"
 
 #include "slave_bus.h"
@@ -74,6 +76,18 @@ static uint16_t s_name_off[MAX_FILES];
 
 static int name_cmp(const void *a, const void *b) {
     return strcasecmp(s_names + *(const uint16_t *)a, s_names + *(const uint16_t *)b);
+}
+
+// Fisher-Yates, in place. get_rand_32() (pico_rand -- see CMakeLists.txt) is
+// a hardware-seeded PRNG; playlist shuffling has no need for cryptographic
+// quality, just a fresh, non-repeating-pattern order each pass (see
+// player_config.h's [player] shuffle key). `% (i + 1)` has a slight modulo
+// bias for large i, irrelevant at MAX_FILES=256.
+static void shuffle_name_off(uint16_t *off, int n) {
+    for (int i = n - 1; i > 0; i--) {
+        int j = (int)(get_rand_32() % (uint32_t)(i + 1));
+        uint16_t tmp = off[i]; off[i] = off[j]; off[j] = tmp;
+    }
 }
 
 static bool is_playable(const FILINFO *info) {
@@ -239,8 +253,14 @@ int main(void) {
             continue;
         }
 
-        // Pass 2: play them in case-insensitive sorted order.
-        qsort(s_name_off, nfiles, sizeof(s_name_off[0]), name_cmp);
+        // Pass 2: play them in case-insensitive sorted order, or a freshly
+        // randomised order if vgmplay.ini's [player] shuffle = yes (re-shuffled
+        // every time this outer loop starts a new pass over the SD card).
+        if (player_config_shuffle_enabled()) {
+            shuffle_name_off(s_name_off, nfiles);
+        } else {
+            qsort(s_name_off, nfiles, sizeof(s_name_off[0]), name_cmp);
+        }
         int played = 0;
         for (int i = 0; i < nfiles; i++) {
             if (play_one(dir_path, s_names + s_name_off[i])) played++;

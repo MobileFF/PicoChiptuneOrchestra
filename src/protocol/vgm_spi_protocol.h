@@ -214,6 +214,25 @@ enum vgm_spi_opcode {
     // voice of a song plays that sliver at a generic guess (audible).
     VGMSPI_OP_YM2612_DAC_RATE = 0x14,
 
+    // Output volume, as a percent of unity in `data` (100 = unchanged, 0 =
+    // silent, >100 = boost -- clamped to the sample's int16_t range so it
+    // can't wrap). `reg` ignored. Applied post-render in slave_engine.c, so
+    // it works identically for every chip regardless of how that chip
+    // computes its raw sample -- unlike gap/cs, this needs to reach the
+    // SLAVE (it scales what actually comes out of that board's DAC), not
+    // just tune the master's own send timing. Exists because two chips
+    // sharing one analog mix can come out at very different native
+    // loudness for the same musical intent -- e.g. 調査用/04 Hot Summer
+    // Riding.vgm's AY-3-8910 needed roughly half its default level to
+    // balance against this project's SCC output (2026-09-14/15; see
+    // docs/design-notes.md "Hot Summer Riding" -- what had looked like a
+    // melody/SCC sync bug turned out to be this). Set via vgmplay.ini's
+    // `volume` key (see player_config.h); default 100 on every chip, so a
+    // card with no such key is byte-identical to before this opcode
+    // existed. Sent redundantly alongside RESET (slave_bus.c) rather than
+    // continuously, since it rarely changes mid-song.
+    VGMSPI_OP_VOLUME = 0x15,
+
     // Not a real opcode: one past the highest valid one. slave_spi_rx.c
     // range-checks the byte in a frame's opcode position against this while
     // resyncing after a dropped byte -- keep it last in this enum.
@@ -230,7 +249,7 @@ enum vgm_spi_opcode {
 // 3-byte frame -- the parser discards just the stray byte and keeps hunting.
 #define VGMSPI_MASK_BASE \
     ((1u << VGMSPI_OP_NOP) | (1u << VGMSPI_OP_RESET) | (1u << VGMSPI_OP_MUTE) | \
-     (1u << VGMSPI_OP_CLOCK))
+     (1u << VGMSPI_OP_CLOCK) | (1u << VGMSPI_OP_VOLUME))
 #define VGMSPI_MASK_SN76489 (VGMSPI_MASK_BASE | (1u << VGMSPI_OP_WRITE0))
 #define VGMSPI_MASK_AY8910  (VGMSPI_MASK_BASE | (1u << VGMSPI_OP_WRITE0))
 #define VGMSPI_MASK_YM2413  (VGMSPI_MASK_BASE | (1u << VGMSPI_OP_WRITE0))

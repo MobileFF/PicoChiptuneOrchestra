@@ -15,13 +15,15 @@
 static int  g_present[VGM_CHIP_COUNT];
 static int  g_cs[VGM_CHIP_COUNT];
 static long g_gap[VGM_CHIP_COUNT];
+static int  g_volume[VGM_CHIP_COUNT];
 
 void slave_bus_set_present(vgm_chip_id_t c, bool v)   { if (c < VGM_CHIP_COUNT) g_present[c] = v ? 1 : 0; }
 void slave_bus_set_cs_gpio(vgm_chip_id_t c, unsigned v){ if (c < VGM_CHIP_COUNT) g_cs[c] = (int)v; }
 void slave_bus_set_gap_us(vgm_chip_id_t c, uint32_t v) { if (c < VGM_CHIP_COUNT) g_gap[c] = (long)v; }
+void slave_bus_set_volume_pct(vgm_chip_id_t c, uint8_t v) { if (c < VGM_CHIP_COUNT) g_volume[c] = (int)v; }
 
 int main(void) {
-    for (int i = 0; i < VGM_CHIP_COUNT; i++) { g_present[i] = -1; g_cs[i] = -1; g_gap[i] = -1; }
+    for (int i = 0; i < VGM_CHIP_COUNT; i++) { g_present[i] = -1; g_cs[i] = -1; g_gap[i] = -1; g_volume[i] = -1; }
 
     const char *cfg =
         "; a comment line\n"
@@ -33,6 +35,7 @@ int main(void) {
         "[AY-3-8910]\n"          // normalises to AY8910
         "cs = 7   ; inline comment after the value\n"
         "GAP_US=55\n"
+        "volume = 50\n"
         "\n"
         "[Sega PCM]\n"           // normalises to SEGAPCM
         "ENABLED = TrUe\n"
@@ -41,6 +44,7 @@ int main(void) {
         "[ym2203]\n"
         "enabled = maybe\n"      // bad boolean -> ignored, not counted
         "cs = twelve\n"          // bad number  -> ignored, not counted
+        "vol = 999\n"            // out of 0-255 range -> ignored, not counted
         "wobble = 3\n"           // unknown key -> ignored
         "\n"
         "[bogus_chip]\n"         // unknown section -> its keys skipped
@@ -48,24 +52,32 @@ int main(void) {
         "\n"
         "[scc]\n"
         "cs = 28\n"              // boundary-valid GPIO
-        "this line has no equals sign\n";
-
-    int n = player_config_apply(cfg);
+        "this line has no equals sign\n"
+        "\n"
+        "[player]\n"             // not a chip -- general playback settings
+        "shuffle = yes\n"
+        "wobble = 3\n";          // unknown key in [player] -> ignored
 
     int fail = 0;
     #define CHK(c) do { if (!(c)) { printf("FAIL: %s\n", #c); fail = 1; } } while (0)
 
+    CHK(player_config_shuffle_enabled() == false); // default before parsing
+    int n = player_config_apply(cfg);
+    CHK(player_config_shuffle_enabled() == true);   // [player] shuffle = yes
+
     CHK(g_present[VGM_CHIP_SN76489] == 0);          // enabled = no
     CHK(g_cs[VGM_CHIP_AY8910] == 7);                // [AY-3-8910] cs, inline comment stripped
     CHK(g_gap[VGM_CHIP_AY8910] == 55);              // GAP_US alias
+    CHK(g_volume[VGM_CHIP_AY8910] == 50);           // volume key
     CHK(g_present[VGM_CHIP_SEGAPCM] == 1);          // [Sega PCM] ENABLED = TrUe
     CHK(g_cs[VGM_CHIP_SEGAPCM] == 27);              // "Pin" alias
     CHK(g_present[VGM_CHIP_YM2203] == -1);          // "maybe" rejected
     CHK(g_cs[VGM_CHIP_YM2203] == -1);               // "twelve" rejected
+    CHK(g_volume[VGM_CHIP_YM2203] == -1);           // 999 out of range, rejected
     CHK(g_cs[VGM_CHIP_SCC] == 28);
     CHK(g_present[VGM_CHIP_YM2612] == -1);          // never mentioned -> untouched
     CHK(g_cs[VGM_CHIP_YM2612] == -1);
-    CHK(n == 6); // sn.enabled, ay.cs, ay.gap, segapcm.enabled, segapcm.cs, scc.cs
+    CHK(n == 8); // sn.enabled, ay.cs, ay.gap, ay.volume, segapcm.enabled, segapcm.cs, scc.cs, player.shuffle
 
     printf("applied=%d\n", n);
     printf(fail ? "FAILED\n" : "ok\n");

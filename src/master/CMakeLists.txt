@@ -38,6 +38,7 @@ target_link_libraries(master PRIVATE
     pico_stdlib
     pico_multicore
     pico_sync
+    pico_rand
     hardware_spi
     hardware_gpio
     hardware_i2c

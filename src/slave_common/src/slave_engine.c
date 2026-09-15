@@ -1,6 +1,7 @@
 #include "slave_engine.h"
 
 #include <stdio.h>
+#include <stdint.h>
 #include "pico/multicore.h"
 #include "audio_pwm.h"
 #include "vgm_spi_protocol.h"
@@ -27,6 +28,7 @@ void slave_audio_engine_run(const chip_ops_t *ops, uint audio_pin, const char *c
     printf("[%s] audio engine running at %lu Hz\n", chip_name, (unsigned long)sample_rate_hz);
 
     bool muted = false;
+    uint8_t volume_pct = 100; // see VGMSPI_OP_VOLUME in vgm_spi_protocol.h
 
     // Bresenham-style tick pacing: avoids a 64-bit division per sample
     // (sample_rate_hz doesn't divide 1e6 evenly, e.g. 44100) while keeping
@@ -250,6 +252,15 @@ void slave_audio_engine_run(const chip_ops_t *ops, uint audio_pin, const char *c
                     muted = true;
                     printf("[%s] MUTE\n", chip_name);
                     break;
+                case VGMSPI_OP_VOLUME:
+                    // Percent of unity, applied post-render below -- see its
+                    // doc comment in vgm_spi_protocol.h. Deliberately NOT
+                    // reset by VGMSPI_OP_RESET above: it balances this
+                    // chip's board against whatever else shares the analog
+                    // mix, which has nothing to do with the emulated chip's
+                    // own state.
+                    volume_pct = data;
+                    break;
                 case VGMSPI_OP_NOP:
                 default:
                     break;
@@ -270,6 +281,12 @@ void slave_audio_engine_run(const chip_ops_t *ops, uint audio_pin, const char *c
         }
 
         int16_t sample = ops->render();
+        if (!muted && volume_pct != 100) {
+            int32_t scaled = ((int32_t)sample * volume_pct) / 100;
+            if (scaled > INT16_MAX) scaled = INT16_MAX;
+            else if (scaled < INT16_MIN) scaled = INT16_MIN;
+            sample = (int16_t)scaled;
+        }
         audio_pwm_write(audio_pin, muted ? 0 : sample);
 
         next = delayed_by_us(next, whole_us);

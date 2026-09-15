@@ -33,10 +33,11 @@ static struct {
     bool present;
     uint cs_gpio;
     uint32_t gap_us;
+    uint8_t volume_pct; // see VGMSPI_OP_VOLUME in vgm_spi_protocol.h; 100 = unchanged
 } s_routes[VGM_CHIP_COUNT] = {
-    [VGM_CHIP_SN76489] = {.present = true, .cs_gpio = 12, .gap_us = GAP_US_DEFAULT},
-    [VGM_CHIP_YM2612]  = {.present = true, .cs_gpio = 13, .gap_us = GAP_US_DEFAULT},
-    [VGM_CHIP_AY8910]  = {.present = true, .cs_gpio = 14, .gap_us = 120}, // needed extra margin, see above; raised
+    [VGM_CHIP_SN76489] = {.present = true, .cs_gpio = 12, .gap_us = GAP_US_DEFAULT, .volume_pct = 100},
+    [VGM_CHIP_YM2612]  = {.present = true, .cs_gpio = 13, .gap_us = GAP_US_DEFAULT, .volume_pct = 100},
+    [VGM_CHIP_AY8910]  = {.present = true, .cs_gpio = 14, .gap_us = 120, .volume_pct = 100}, // needed extra margin, see above; raised
     // 80->120 (2026-09-12): a song's opening burst of ~15 zero-wait register
     // writes (mixer + 3 channels' tone/level) sets up its first note, and a
     // dropped/corrupted one there leaves that first note wrong for its whole
@@ -46,11 +47,11 @@ static struct {
     // every 0xA0 write redundant (2x, see vgm_player.c) -- hardware-confirmed
     // clean across 01 Start Music and ~10 other songs, power cycles included
     // (2026-09-13).
-    [VGM_CHIP_YM2413]  = {.present = true, .cs_gpio = 15, .gap_us = GAP_US_DEFAULT},
-    [VGM_CHIP_YM2151]  = {.present = true, .cs_gpio = 20, .gap_us = 0}, // 0 = BURST (whole frame under one CS assertion, ~6us). FM-dense music (OutRun, ~30-write bursts inside one 22us VGM wait) can't be delivered by the per-byte-CS path in time -- the master falls seconds behind and rushes -> wrong pitch/tempo. Raising gap made it WORSE. Burst is only reliable because the bus now runs SPI mode 1 (CPHA=1); see slave_bus_init() / send_frame(). vgmplay.ini can override to a nonzero gap if this link ever proves marginal.
-    [VGM_CHIP_YM2203]  = {.present = true, .cs_gpio = 21, .gap_us = GAP_US_DEFAULT},
-    [VGM_CHIP_SCC]     = {.present = true, .cs_gpio = 22, .gap_us = GAP_US_DEFAULT},
-    [VGM_CHIP_SEGAPCM] = {.present = true, .cs_gpio = 26, .gap_us = GAP_US_DEFAULT},
+    [VGM_CHIP_YM2413]  = {.present = true, .cs_gpio = 15, .gap_us = GAP_US_DEFAULT, .volume_pct = 100},
+    [VGM_CHIP_YM2151]  = {.present = true, .cs_gpio = 20, .gap_us = 0, .volume_pct = 100}, // 0 = BURST (whole frame under one CS assertion, ~6us). FM-dense music (OutRun, ~30-write bursts inside one 22us VGM wait) can't be delivered by the per-byte-CS path in time -- the master falls seconds behind and rushes -> wrong pitch/tempo. Raising gap made it WORSE. Burst is only reliable because the bus now runs SPI mode 1 (CPHA=1); see slave_bus_init() / send_frame(). vgmplay.ini can override to a nonzero gap if this link ever proves marginal.
+    [VGM_CHIP_YM2203]  = {.present = true, .cs_gpio = 21, .gap_us = GAP_US_DEFAULT, .volume_pct = 100},
+    [VGM_CHIP_SCC]     = {.present = true, .cs_gpio = 22, .gap_us = GAP_US_DEFAULT, .volume_pct = 100},
+    [VGM_CHIP_SEGAPCM] = {.present = true, .cs_gpio = 26, .gap_us = GAP_US_DEFAULT, .volume_pct = 100},
 };
 // ---------------------------------------------------------------------
 
@@ -209,6 +210,19 @@ void slave_bus_reset(vgm_chip_id_t chip, uint8_t clock_preset) {
                    VGMSPI_OP_RESET, clock_preset, 0);
         sleep_us(300);
     }
+    // VGMSPI_OP_VOLUME doesn't reset any chip state (RESET above doesn't
+    // touch it either -- see slave_engine.c), it's just piggybacking on
+    // RESET's existing redundant-send/gap dance to reach the slave reliably
+    // at song start without a separate one-shot code path of its own.
+    for (int i = 0; i < 3; i++) {
+        send_frame(s_routes[chip].cs_gpio, s_routes[chip].gap_us,
+                   VGMSPI_OP_VOLUME, 0, s_routes[chip].volume_pct);
+        sleep_us(300);
+    }
+}
+
+void slave_bus_set_volume_pct(vgm_chip_id_t chip, uint8_t pct) {
+    if (chip < VGM_CHIP_COUNT) s_routes[chip].volume_pct = pct;
 }
 
 void slave_bus_set_clock(vgm_chip_id_t chip, uint8_t clock_preset) {

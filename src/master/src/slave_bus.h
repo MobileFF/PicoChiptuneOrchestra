@@ -18,6 +18,10 @@ void slave_bus_init(void);
 void slave_bus_set_present(vgm_chip_id_t chip, bool present);
 void slave_bus_set_cs_gpio(vgm_chip_id_t chip, unsigned cs_gpio);
 void slave_bus_set_gap_us(vgm_chip_id_t chip, uint32_t gap_us);
+// Output volume as a percent of unity (100 = unchanged, default). Sent to
+// the slave via VGMSPI_OP_VOLUME, redundantly alongside RESET -- see
+// vgm_spi_protocol.h and player_config.h's `volume` ini key.
+void slave_bus_set_volume_pct(vgm_chip_id_t chip, uint8_t pct);
 
 // True if this build's routing table has a slave wired up for this chip.
 bool slave_bus_has_chip(vgm_chip_id_t chip);

@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """GUI editor for the VGM multi-MCU player's SD-card config file (vgmplay.ini).
 
-Per sound chip: enable/disable, chip-select GPIO, and an optional per-byte
-CS-pulse gap (microseconds). Mirrors the firmware parser in
-master/src/player_config.c -- section names ignore case / '-' / '_' / space,
-the same key aliases are accepted, and the same reserved-pin / duplicate-CS
-checks are surfaced as warnings.
+Per sound chip: enable/disable, chip-select GPIO, an optional per-byte
+CS-pulse gap (microseconds), and an optional output volume (percent of
+unity, 0-255). Plus one general (non-chip) setting: shuffle playback order.
+Mirrors the firmware parser in master/src/player_config.c -- section names
+ignore case / '-' / '_' / space, the same key aliases are accepted, and the
+same reserved-pin / duplicate-CS checks are surfaced as warnings.
 
 Standard library only (tkinter). Run with no arguments for the GUI, or
 `--check FILE` to parse a file and print the result on the console.
@@ -34,6 +35,11 @@ DISPLAY = {c[0]: c[1] for c in CHIPS}
 DEFAULT_CS = {c[0]: c[2] for c in CHIPS}
 DEFAULT_GAP = {c[0]: c[3] for c in CHIPS}
 
+# Sentinel `cur` value for the one non-chip section, [player] (general
+# playback settings -- currently just `shuffle`). Mirrors
+# master/src/player_config.c's SECTION_PLAYER.
+PLAYER_SECTION = "player"
+
 # normalized section name -> canonical
 SECTION_ALIASES = {
     "sn76489": "sn76489",
@@ -51,6 +57,7 @@ KEY_ALIASES = {
     "enabled": "enabled", "enable": "enabled", "present": "enabled", "on": "enabled",
     "cs": "cs", "csgpio": "cs", "cspin": "cs", "pin": "cs",
     "gap": "gap", "gapus": "gap",
+    "volume": "volume", "vol": "volume",
 }
 
 BOOL_TRUE = {"1", "on", "yes", "true", "enabled", "enable"}
@@ -92,7 +99,8 @@ def parse_bool(v):
 def parse_ini(text):
     """Return (settings, notes).
 
-    settings: {canonical_chip: {"enabled": bool?, "cs": int?, "gap": int?}}
+    settings: {canonical_chip: {"enabled": bool?, "cs": int?, "gap": int?,
+    "volume": int?}, PLAYER_SECTION: {"shuffle": bool?}}
     notes:    list of human-readable strings about anything odd in the file.
     """
     settings = {}
@@ -108,19 +116,32 @@ def parse_ini(text):
                 notes.append(f"line {lineno}: malformed section header, ignored")
                 continue
             name = line[1:end].strip()
-            cur = SECTION_ALIASES.get(_norm(name))
-            if cur is None:
-                notes.append(f"line {lineno}: unknown chip section [{name}], skipped")
+            if _norm(name) == "player":
+                cur = PLAYER_SECTION
+            else:
+                cur = SECTION_ALIASES.get(_norm(name))
+                if cur is None:
+                    notes.append(f"line {lineno}: unknown chip section [{name}], skipped")
             continue
         if "=" not in line:
             notes.append(f"line {lineno}: no '=' , ignored ({line!r})")
             continue
         rawkey, rawval = line.split("=", 1)
-        key = KEY_ALIASES.get(_norm(rawkey))
         val = re.split(r"[;#]", rawval, 1)[0].strip()
         if cur is None:
             notes.append(f"line {lineno}: '{rawkey.strip()}' outside any [chip] section, skipped")
             continue
+        if cur == PLAYER_SECTION:
+            if _norm(rawkey) == "shuffle":
+                b = parse_bool(val)
+                if b is None:
+                    notes.append(f"line {lineno}: bad boolean '{val}' for shuffle")
+                else:
+                    settings.setdefault(PLAYER_SECTION, {})["shuffle"] = b
+            else:
+                notes.append(f"line {lineno}: unknown key '{rawkey.strip()}' in [player], ignored")
+            continue
+        key = KEY_ALIASES.get(_norm(rawkey))
         if key is None:
             notes.append(f"line {lineno}: unknown key '{rawkey.strip()}', ignored")
             continue
@@ -131,7 +152,7 @@ def parse_ini(text):
                 notes.append(f"line {lineno}: bad boolean '{val}' for {DISPLAY[cur]}")
             else:
                 d["enabled"] = b
-        else:  # cs / gap
+        else:  # cs / gap / volume
             if not re.fullmatch(r"\d+", val):
                 notes.append(f"line {lineno}: bad number '{val}' for {key} ({DISPLAY[cur]})")
             else:
@@ -140,7 +161,11 @@ def parse_ini(text):
 
 
 def rows_from_settings(settings):
-    """Merge parsed settings over the built-in defaults into a full row dict."""
+    """Merge parsed settings over the built-in defaults into a full row dict.
+
+    Includes CHIP_ORDER's per-chip rows plus one PLAYER_SECTION entry
+    ({"shuffle": bool}) for the non-chip [player] section.
+    """
     rows = {}
     for chip in CHIP_ORDER:
         s = settings.get(chip, {})
@@ -148,17 +173,24 @@ def rows_from_settings(settings):
             "enabled": s.get("enabled", True),
             "cs": s.get("cs", DEFAULT_CS[chip]),
             "gap": s.get("gap", None),  # None -> use firmware default, no line written
+            "volume": s.get("volume", None),  # None -> use firmware default (100), no line written
         }
+    rows[PLAYER_SECTION] = {"shuffle": settings.get(PLAYER_SECTION, {}).get("shuffle", False)}
     return rows
 
 
 def default_rows():
-    return {chip: {"enabled": True, "cs": DEFAULT_CS[chip], "gap": None}
+    rows = {chip: {"enabled": True, "cs": DEFAULT_CS[chip], "gap": None, "volume": None}
             for chip in CHIP_ORDER}
+    rows[PLAYER_SECTION] = {"shuffle": False}
+    return rows
 
 
 def generate_ini(rows):
     out = [INI_HEADER]
+    out.append("[player]")
+    out.append(f"shuffle = {'yes' if rows[PLAYER_SECTION]['shuffle'] else 'no'}")
+    out.append("")
     for chip in CHIP_ORDER:
         r = rows[chip]
         out.append(f"[{chip}]")
@@ -166,6 +198,8 @@ def generate_ini(rows):
         out.append(f"cs      = {int(r['cs'])}")
         if r["gap"] is not None:
             out.append(f"gap     = {int(r['gap'])}")
+        if r["volume"] is not None:
+            out.append(f"volume  = {int(r['volume'])}")
         out.append("")
     return "\n".join(out).rstrip() + "\n"
 
@@ -191,6 +225,13 @@ def validate(rows):
                     errors.append(f"{name}: gap {g} is negative")
             except (TypeError, ValueError):
                 errors.append(f"{name}: gap '{r['gap']}' is not a number")
+        if r["volume"] is not None:
+            try:
+                vol = int(r["volume"])
+                if not (0 <= vol <= 255):
+                    errors.append(f"{name}: volume {vol} out of range (0-255)")
+            except (TypeError, ValueError):
+                errors.append(f"{name}: volume '{r['volume']}' is not a number")
         if not r["enabled"]:
             continue
         if cs in RESERVED_PINS:
@@ -230,10 +271,12 @@ def run_check(path):
     settings, notes = parse_ini(text)
     rows = rows_from_settings(settings)
     print(f"# parsed {path}\n")
+    print(f"  [player]   shuffle={rows[PLAYER_SECTION]['shuffle']}")
     for chip in CHIP_ORDER:
         r = rows[chip]
         gap = "default" if r["gap"] is None else r["gap"]
-        print(f"  {DISPLAY[chip]:<10} enabled={str(r['enabled']):<5} cs=GPIO{r['cs']:<2} gap={gap}")
+        vol = "default(100)" if r["volume"] is None else r["volume"]
+        print(f"  {DISPLAY[chip]:<10} enabled={str(r['enabled']):<5} cs=GPIO{r['cs']:<2} gap={gap} volume={vol}")
     errors, warnings = validate(rows)
     for n in notes:
         print(f"\nnote: {n}")
@@ -257,19 +300,25 @@ def run_gui(initial_path=None):
 
     root = tk.Tk()
     root.title("vgmplay.ini editor")
-    root.minsize(560, 460)
+    root.minsize(640, 460)
 
     state = {"path": None}
-    vars_ = {}  # chip -> {"enabled": BooleanVar, "cs": StringVar, "gap": StringVar}
+    vars_ = {}  # chip -> {"enabled": BooleanVar, "cs": StringVar, "gap": StringVar, "volume": StringVar}
+    shuffle_var = tk.BooleanVar(value=False)  # [player] shuffle
 
     # ---- widgets ----
     pathvar = tk.StringVar(value="(new file - not saved yet)")
     ttk.Label(root, textvariable=pathvar, anchor="w",
               relief="groove", padding=(6, 3)).pack(fill="x", padx=8, pady=(8, 4))
 
+    playerf = ttk.Frame(root, padding=(8, 0))
+    playerf.pack(fill="x")
+    ttk.Checkbutton(playerf, text="Shuffle playback (random order, re-shuffled every pass)",
+                    variable=shuffle_var).pack(side="left")
+
     grid = ttk.Frame(root, padding=8)
     grid.pack(fill="x")
-    for col, txt in enumerate(("Chip", "Enabled", "CS GPIO", "Gap (us)", "")):
+    for col, txt in enumerate(("Chip", "Enabled", "CS GPIO", "Gap (us)", "Volume (%)", "")):
         ttk.Label(grid, text=txt, font=("TkDefaultFont", 9, "bold")).grid(
             row=0, column=col, padx=6, pady=(0, 6), sticky="w")
 
@@ -277,20 +326,23 @@ def run_gui(initial_path=None):
         en = tk.BooleanVar(value=True)
         cs = tk.StringVar(value=str(DEFAULT_CS[chip]))
         gap = tk.StringVar(value="")
-        vars_[chip] = {"enabled": en, "cs": cs, "gap": gap}
+        volume = tk.StringVar(value="")
+        vars_[chip] = {"enabled": en, "cs": cs, "gap": gap, "volume": volume}
 
         ttk.Label(grid, text=DISPLAY[chip]).grid(row=i, column=0, padx=6, pady=2, sticky="w")
         ttk.Checkbutton(grid, variable=en).grid(row=i, column=1, padx=6, pady=2)
         ttk.Spinbox(grid, from_=CS_MIN, to=CS_MAX, width=5, textvariable=cs).grid(
             row=i, column=2, padx=6, pady=2)
         ttk.Entry(grid, width=7, textvariable=gap).grid(row=i, column=3, padx=6, pady=2)
+        ttk.Spinbox(grid, from_=0, to=255, width=5, textvariable=volume).grid(
+            row=i, column=4, padx=6, pady=2)
         dg = DEFAULT_GAP[chip]
         # `dg` can legitimately be 0 (YM2151's burst default) -- must check
         # "is not None", not truthiness, or 0 falls through to the wrong
         # "default gap 40" branch below.
         hint = f"default gap {dg}" if dg is not None else "default gap 40"
-        ttk.Label(grid, text=f"(blank = {hint})", foreground="#777").grid(
-            row=i, column=4, padx=6, pady=2, sticky="w")
+        ttk.Label(grid, text=f"(blank = {hint}; volume blank = 100)", foreground="#777").grid(
+            row=i, column=5, padx=6, pady=2, sticky="w")
 
     btns = ttk.Frame(root, padding=(8, 4))
     btns.pack(fill="x")
@@ -311,11 +363,14 @@ def run_gui(initial_path=None):
         for chip in CHIP_ORDER:
             v = vars_[chip]
             g = v["gap"].get().strip()
+            vol = v["volume"].get().strip()
             rows[chip] = {
                 "enabled": bool(v["enabled"].get()),
                 "cs": v["cs"].get().strip(),
                 "gap": (int(g) if re.fullmatch(r"\d+", g) else (None if g == "" else g)),
+                "volume": (int(vol) if re.fullmatch(r"\d+", vol) else (None if vol == "" else vol)),
             }
+        rows[PLAYER_SECTION] = {"shuffle": bool(shuffle_var.get())}
         return rows
 
     def form_from_rows(rows):
@@ -325,6 +380,8 @@ def run_gui(initial_path=None):
             v["enabled"].set(bool(r["enabled"]))
             v["cs"].set(str(r["cs"]))
             v["gap"].set("" if r["gap"] is None else str(r["gap"]))
+            v["volume"].set("" if r["volume"] is None else str(r["volume"]))
+        shuffle_var.set(bool(rows[PLAYER_SECTION]["shuffle"]))
 
     def do_validate(show_ok=True):
         rows = rows_from_form()

@@ -25,6 +25,12 @@ static bool name_matches(const char *raw, const char *key) {
     return *key == '\0';
 }
 
+// Not a chip -- see player_config.h's [player] section doc comment.
+#define SECTION_PLAYER (-2)
+static bool s_shuffle_enabled = false;
+
+bool player_config_shuffle_enabled(void) { return s_shuffle_enabled; }
+
 static int lookup_chip(const char *raw) {
     static const struct { const char *key; int id; } KEYS[] = {
         {"sn76489", VGM_CHIP_SN76489},
@@ -79,7 +85,7 @@ static bool parse_uint(const char *v, uint32_t *out) {
 int player_config_apply(const char *text) {
     char line[128];
     int applied = 0;
-    int cur = -1; // current [chip] section, -1 = none/unknown
+    int cur = -1; // current section: [chip] id, SECTION_PLAYER, or -1 = none/unknown
     const char *p = text;
 
     while (*p) {
@@ -97,8 +103,12 @@ int player_config_apply(const char *text) {
             if (!close) { printf("config: malformed section line: %s\n", s); continue; }
             *close = '\0';
             char *name = trim(s + 1);
-            cur = lookup_chip(name);
-            if (cur < 0) printf("config: unknown chip section [%s], skipping its keys\n", name);
+            if (name_matches(name, "player")) {
+                cur = SECTION_PLAYER;
+            } else {
+                cur = lookup_chip(name);
+                if (cur < 0) printf("config: unknown chip section [%s], skipping its keys\n", name);
+            }
             continue;
         }
 
@@ -110,6 +120,17 @@ int player_config_apply(const char *text) {
         for (char *c = val; *c; c++)
             if (*c == '#' || *c == ';') { *c = '\0'; break; } // strip inline comment
         val = trim(val);
+
+        if (cur == SECTION_PLAYER) {
+            if (!strcasecmp(key, "shuffle")) {
+                bool b;
+                if (parse_bool(val, &b)) { s_shuffle_enabled = b; applied++; }
+                else printf("config: bad boolean '%s' for %s\n", val, key);
+            } else {
+                printf("config: unknown key '%s' in [player], ignored\n", key);
+            }
+            continue;
+        }
 
         if (cur < 0) {
             printf("config: '%s' is outside any [chip] section, skipped\n", key);
@@ -130,6 +151,10 @@ int player_config_apply(const char *text) {
             uint32_t u;
             if (parse_uint(val, &u)) { slave_bus_set_gap_us((vgm_chip_id_t)cur, u); applied++; }
             else printf("config: bad number '%s' for %s\n", val, key);
+        } else if (!strcasecmp(key, "volume") || !strcasecmp(key, "vol")) {
+            uint32_t u;
+            if (parse_uint(val, &u) && u <= 255) { slave_bus_set_volume_pct((vgm_chip_id_t)cur, (uint8_t)u); applied++; }
+            else printf("config: bad number '%s' for %s (0-255)\n", val, key);
         } else {
             printf("config: unknown key '%s', ignored\n", key);
         }
