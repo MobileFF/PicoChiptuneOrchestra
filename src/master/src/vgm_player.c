@@ -482,14 +482,46 @@ static bool handle_data_block(reader_t *rd) {
         printf("[VGM ] 0x67 SegaPCM ROM block: %lu data bytes @ ROM 0x%lX (pad %lu)\n",
                (unsigned long)(size - 8), (unsigned long)start_addr, (unsigned long)pad);
 #endif
-        slave_bus_send(VGM_CHIP_SEGAPCM, VGMSPI_OP_PCM_UPLOAD_RESET,
-                       (uint8_t)(start_addr >> 16), (uint8_t)(start_addr >> 8));
-        for (uint32_t i = 0; i < pad; i++)
-            slave_bus_send(VGM_CHIP_SEGAPCM, VGMSPI_OP_PCM_UPLOAD_BYTE, 0, 0x80);
-        for (uint32_t i = 8; i < size; i++) {
-            int b = reader_byte(rd);
-            if (b < 0) return false;
-            slave_bus_send(VGM_CHIP_SEGAPCM, VGMSPI_OP_PCM_UPLOAD_BYTE, 0, (uint8_t)b);
+        // Re-anchor the upload cursor every 256 bytes (the finest granularity
+        // VGMSPI_OP_PCM_UPLOAD_RESET's 2-byte address supports), 2x for good
+        // measure -- same fix as the YM2612 PCM bank upload above (see its
+        // comment) for the same failure mode, which this path was missing
+        // entirely until 2026-09-19: slave_spi_rx.c's inter-core FIFO push is
+        // non-blocking and silently DROPS a frame outright when core1 is
+        // momentarily behind (its own comment: "DROP this frame rather than
+        // stall here"). A single dropped VGMSPI_OP_PCM_UPLOAD_BYTE among the
+        // thousands sent here has no ack and no resync of its own, so
+        // upload_byte()'s cursor never learns a byte went missing --
+        // EVERY later byte in this chunk then lands one position early for
+        // the rest of the chunk, permanently misaligning whatever channel
+        // reads that ROM region for the rest of the song (found investigating
+        // a Space Harrier / "02 Theme.vgm" report of extra drum-like hits
+        // throughout the song that aren't in the original -- an offline,
+        // transport-free re-render of the exact same emulator from the exact
+        // same register stream, see tools/offline_render/render_segapcm.c,
+        // came out clean, which rules out chip_segapcm.c's own logic and
+        // points at exactly this kind of upload-time corruption instead).
+        // Re-seeking every page bounds one dropped byte's damage to at most
+        // that 256-byte page instead of the rest of the chunk.
+        uint32_t page_base = start_addr - pad;
+        uint32_t n_upload = pad + (size - 8);
+        for (uint32_t i = 0; i < n_upload; i++) {
+            if ((i & 0xFFu) == 0) {
+                uint32_t cur = page_base + i;
+                slave_bus_send(VGM_CHIP_SEGAPCM, VGMSPI_OP_PCM_UPLOAD_RESET,
+                               (uint8_t)(cur >> 16), (uint8_t)(cur >> 8));
+                slave_bus_send(VGM_CHIP_SEGAPCM, VGMSPI_OP_PCM_UPLOAD_RESET,
+                               (uint8_t)(cur >> 16), (uint8_t)(cur >> 8));
+            }
+            uint8_t b;
+            if (i < pad) {
+                b = 0x80;
+            } else {
+                int rb = reader_byte(rd);
+                if (rb < 0) return false;
+                b = (uint8_t)rb;
+            }
+            slave_bus_send(VGM_CHIP_SEGAPCM, VGMSPI_OP_PCM_UPLOAD_BYTE, 0, b);
         }
         // The upload above is ~65us per byte on real hardware -- tens of KB
         // of ROM means SECONDS of wall-clock time spent here. Sega PCM ROM

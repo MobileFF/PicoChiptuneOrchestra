@@ -82,6 +82,33 @@ slower than the ymfm render -- a 90 s render takes a few minutes.
 real recording's ~550 Hz). Trust its onset / timing metrics, not its
 spectral balance.
 
+## render_segapcm.c / run_segapcm.sh  (Sega PCM, shipped software emulator)
+
+Same idea as render_wav.c / render_ym2151.cpp, for the Sega PCM path: links
+the *shipped* master parser (`src/master/src/vgm_player.c`) and the *shipped*
+`src/slave_segapcm/src/chip_segapcm.c`, with no SPI, no per-byte CS gap/burst,
+no inter-core FIFO, no PWM. Born from the Space Harrier / `02 Theme.vgm`
+"extra drum-like hits throughout the song" investigation (2026-09-19, see
+`docs/design-notes.md`'s Sega PCM section): this is what proved
+`chip_segapcm.c`'s own register-driven logic was innocent (clean output, no
+clipping) and pointed at the ROM upload's missing re-anchor instead (fixed in
+`vgm_player.c`).
+
+```sh
+tools/offline_render/run_segapcm.sh "調査用/02 Theme.vgm" /tmp/spct 230
+#   -> /tmp/spct_shipped.wav   (segapcm_render()'s own output -- already
+#                               mixed + >>4 + clamped, exactly what real
+#                               hardware would play given perfect delivery)
+```
+
+Renders at the chip's own native rate for the song's clock preset
+(`segapcm_sample_rate_hz()` -- 31250 Hz at 4 MHz, 62500 Hz at 8 MHz). Prints
+peak/RMS. If the artifact this tool was built to chase reappears here, it's a
+bug in `chip_segapcm.c` itself, deterministic and independent of the SPI
+transport; if it's clean here but not on real hardware, look at the transport
+(SPI timing, the slave's inter-core FIFO, the ROM upload path) instead --
+exactly what happened in the investigation above.
+
 ## analyze.py  (numpy only; PCM-16 WAV in only — convert with Audacity)
 
 ```sh

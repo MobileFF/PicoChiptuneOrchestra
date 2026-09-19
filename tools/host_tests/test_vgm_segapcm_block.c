@@ -34,9 +34,13 @@ bool slave_bus_has_chip(vgm_chip_id_t c) { (void)c; return true; }
 void slave_bus_reset(vgm_chip_id_t c, uint8_t p) { (void)c; (void)p; }
 void slave_bus_write(vgm_chip_id_t c, uint8_t po, uint8_t r, uint8_t d) { (void)c; (void)po; (void)r; (void)d; }
 void slave_bus_mute_all(void) {}
+void slave_bus_set_clock(vgm_chip_id_t c, uint8_t p) { (void)c; (void)p; }
 void slave_bus_send(vgm_chip_id_t c, uint8_t op, uint8_t r, uint8_t d) {
     (void)c;
     if (g_nsend < MAX_EV) g_send[g_nsend++] = (ev_t){op, r, d};
+}
+void slave_bus_send_burst(vgm_chip_id_t c, uint8_t op, uint8_t r, uint8_t d) {
+    slave_bus_send(c, op, r, d);
 }
 
 static void put_u32(uint8_t *p, uint32_t v) { p[0] = v; p[1] = v >> 8; p[2] = v >> 16; p[3] = v >> 24; }

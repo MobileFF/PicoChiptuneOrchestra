@@ -52,6 +52,27 @@ static struct {
     [VGM_CHIP_YM2203]  = {.present = true, .cs_gpio = 21, .gap_us = GAP_US_DEFAULT, .volume_pct = 100},
     [VGM_CHIP_SCC]     = {.present = true, .cs_gpio = 22, .gap_us = GAP_US_DEFAULT, .volume_pct = 100},
     [VGM_CHIP_SEGAPCM] = {.present = true, .cs_gpio = 26, .gap_us = GAP_US_DEFAULT, .volume_pct = 100},
+    // Space Harrier (YM2203+SegaPCM, "02 Theme.vgm") investigation
+    // (2026-09-19): reported extra drum-like hits throughout the song that
+    // aren't in the original. Two per-note-register-write transport theories
+    // were tried here and hardware-ruled-out (no change either way): gap_us
+    // 40->120 (byte-loss, the AY-3-8910 fix's class) and gap_us->0/BURST
+    // (a suspected torn-read race against slave_engine.c's render loop).
+    // Reverted to default. An offline, transport-free re-render of the exact
+    // same emulator from the exact same register stream (see
+    // tools/offline_render/render_segapcm.c) came out clean, which cleared
+    // chip_segapcm.c's own logic too. The actual bug: this chip's ROM image
+    // is uploaded once at song start as thousands of individual
+    // VGMSPI_OP_PCM_UPLOAD_BYTE frames with NO periodic re-anchoring, while
+    // slave_spi_rx.c's inter-core FIFO push is non-blocking and silently
+    // drops a frame outright when core1 is momentarily behind -- one dropped
+    // byte there shifts every later byte for the rest of the ROM chunk,
+    // misaligning whatever channel reads that region for the rest of the
+    // song. Fixed in vgm_player.c's handle_data_block() (type 0x80) by
+    // re-sending the upload seek every 256 bytes, mirroring the YM2612 PCM
+    // bank upload's already-proven every-128-bytes re-anchor (see its
+    // comment in vgm_player.c). NOT YET hardware-confirmed for Space
+    // Harrier.
 };
 // ---------------------------------------------------------------------
 
