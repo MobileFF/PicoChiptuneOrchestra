@@ -166,12 +166,22 @@ static void send_frame(uint cs_gpio, uint32_t gap_us, uint8_t opcode, uint8_t re
     }
 }
 
+// The skip button's GPIO (default 2, see main.c's PIN_BTN_SKIP) -- overridable
+// via vgmplay.ini's [player] skip_button before slave_bus_init() runs, so the
+// reserved-pin check below warns about wherever the button ACTUALLY is, not
+// just the firmware's built-in default.
+static uint s_skip_button_gpio = 2;
+
+void slave_bus_set_skip_button_gpio(unsigned gpio) {
+    if (gpio <= 28) s_skip_button_gpio = gpio;
+}
+
 // GPIO the master already uses for something else -- a CS line landing here
 // (via a bad vgmplay.ini) would fight another peripheral. Warn, don't block.
 static bool gpio_is_reserved(uint g, const char **what) {
+    if (g == s_skip_button_gpio) { *what = "skip button"; return true; }
     switch (g) {
         case 0: case 1:  *what = "OLED I2C0";      return true;
-        case 2:          *what = "skip button";    return true;
         case 10: case 11:*what = "slave bus SPI1"; return true;
         case 16: case 17: case 18: case 19: *what = "SD card SPI0"; return true;
         default: return false;

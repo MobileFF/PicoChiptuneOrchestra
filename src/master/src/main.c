@@ -1,11 +1,12 @@
 // VGM multi-MCU player -- master firmware (Raspberry Pi Pico).
 //
-// Mounts the SD card, plays every .vgm/.vgz file in the root directory in
-// case-insensitive sorted order (looping the whole list forever) or, if
-// vgmplay.ini's [player] shuffle = yes, in a freshly-randomised order each
-// pass, dispatching register writes to the slave boards over slave_bus. See
-// docs/circuit.md for wiring and docs/design-notes.md for VGM command
-// coverage.
+// Mounts the SD card, plays every .vgm/.vgz file in the root directory --
+// or, if vgmplay.ini's [player] recursive = yes, every subdirectory too,
+// one folder at a time (see visit_dir()) -- in case-insensitive sorted order
+// (looping forever) or, if [player] shuffle = yes, a freshly-randomised
+// order per folder each pass, dispatching register writes to the slave
+// boards over slave_bus. See docs/circuit.md for wiring and
+// docs/design-notes.md for VGM command coverage.
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -24,7 +25,11 @@
 #include "core_fault.h"
 #include "player_config.h"
 
-#define PIN_BTN_SKIP 2 // to GND; internal pull-up enabled
+#define PIN_BTN_SKIP 2 // to GND; internal pull-up enabled -- built-in default,
+                        // overridable via vgmplay.ini's [player] skip_button
+                        // (e.g. a clone board's "USR" button on a different
+                        // GPIO than a genuine Pico's usual wiring)
+static uint s_btn_skip_gpio = PIN_BTN_SKIP;
 
 static const char *TEMP_VGM_NAME = "_vgztmp.vgm";
 static const char *TEMP_VGM_PATH = "0:/_vgztmp.vgm";
@@ -35,8 +40,16 @@ static bool has_extension(const char *name, const char *ext) {
     return strcasecmp(name + (nlen - elen), ext) == 0;
 }
 
+// Also doubles as the [player] preview cutoff: when enabled, treat "song
+// time so far reached the preview length" the same as a real button press,
+// so vgm_player_play() ends the song and main.c moves on to the next file --
+// no separate code path in vgm_player.c needed.
 static bool poll_skip_button(void) {
-    return !gpio_get(PIN_BTN_SKIP);
+    if (!gpio_get(s_btn_skip_gpio)) return true;
+    if (player_config_preview_enabled() &&
+        vgm_player_elapsed_seconds() >= player_config_preview_seconds())
+        return true;
+    return false;
 }
 
 // OLED render-loop + core1/core0 fault health check, done here on core0
@@ -96,11 +109,132 @@ static bool is_playable(const FILINFO *info) {
     return has_extension(info->fname, ".vgm") || has_extension(info->fname, ".vgz");
 }
 
+// --- [player] recursive: walk every subdirectory, playing each folder's ----
+// --- files in turn, instead of just the SD card root -----------------------
+//
+// core0's stack is a mere 2KB (see docs/design-notes.md's HardFault writeup --
+// a single oversized stack-local buffer once overran it and silently trashed
+// core1's adjacent stack), so this is deliberately NOT plain recursion with
+// per-call locals: every buffer big enough to matter (the directory path, the
+// list of subdirectory names found at that level) is `static` and indexed by
+// `depth`, and the FatFs DIR/FILINFO scan handles are a SINGLE shared static
+// pair, reused level to level -- safe because each level's own scan always
+// finishes (and its DIR is closed) before that level recurses into any child,
+// so a child's reuse of the shared scan state can never clobber a parent that
+// still needs it. visit_dir()'s own stack frame is then just a handful of
+// scalars regardless of how deep the recursion goes.
+//
+// MAX_RECURSE_DEPTH bounds both the static RAM this uses and the worst-case
+// stack depth; 4 comfortably covers any realistic "console/game/album"-style
+// folder layout. DIR_PATH_BUF_SZ is sized for that depth's worth of ordinary
+// folder names, not the pathological case of every single one being near
+// FatFs's 255-char LFN limit -- play_one()'s own path buffer adds separate
+// headroom for a maximally-long leaf filename, so only folder *names* need
+// to fit here.
+#define MAX_RECURSE_DEPTH 4
+#define DIR_PATH_BUF_SZ 200
+#define MAX_SUBDIRS 64
+#define SUBDIR_NAMES_BUF_SZ 2048
+
+static char s_dir_path[MAX_RECURSE_DEPTH + 1][DIR_PATH_BUF_SZ];
+static char s_subdir_names[MAX_RECURSE_DEPTH + 1][SUBDIR_NAMES_BUF_SZ];
+static uint16_t s_subdir_off[MAX_RECURSE_DEPTH + 1][MAX_SUBDIRS];
+static DIR s_scan_dir;
+static FILINFO s_scan_info;
+static int s_played_this_pass;
+static int s_found_this_pass; // total playable files seen across every folder visited this pass
+
+// A subdirectory worth descending into for [player] recursive -- real
+// directories only, and not one of the OS-junk folders (e.g. Windows'
+// "System Volume Information") that tend to appear on an SD card that's ever
+// been plugged into a PC.
+static bool is_real_subdir(const FILINFO *info) {
+    if (!(info->fattrib & AM_DIR)) return false;
+    if (info->fattrib & (AM_HID | AM_SYS)) return false;
+    return true;
+}
+
+static bool play_one(const char *dir_path, const char *fname); // fwd decl
+
+// Scans `s_dir_path[depth]` once, playing every .vgm/.vgz it finds there
+// (sorted or shuffled exactly like the non-recursive root-only path always
+// did), then -- only when [player] recursive is on -- recurses into every
+// subdirectory found in that same scan. depth 0 is always visited (the SD
+// card root); depth 0's caller is responsible for its own "nothing played
+// this whole pass" messaging, using s_played_this_pass.
+static void visit_dir(int depth) {
+    const char *dir_path = s_dir_path[depth];
+    bool recursive = player_config_recursive_enabled();
+
+    int nfiles = 0;
+    size_t names_used = 0;
+    int nsubdirs = 0;
+    size_t subdir_names_used = 0;
+
+    if (f_findfirst(&s_scan_dir, &s_scan_info, dir_path, "*") != FR_OK) {
+        printf("WARNING: could not list directory %s, skipping it\n", dir_path);
+        return;
+    }
+    while (s_scan_info.fname[0] != 0) {
+        if (recursive && depth < MAX_RECURSE_DEPTH && is_real_subdir(&s_scan_info)) {
+            size_t len = strlen(s_scan_info.fname) + 1;
+            if (nsubdirs >= MAX_SUBDIRS || subdir_names_used + len > SUBDIR_NAMES_BUF_SZ) {
+                printf("WARNING: too many subdirectories in %s -- only visiting the first %d\n",
+                       dir_path, nsubdirs);
+            } else {
+                memcpy(s_subdir_names[depth] + subdir_names_used, s_scan_info.fname, len);
+                s_subdir_off[depth][nsubdirs++] = (uint16_t)subdir_names_used;
+                subdir_names_used += len;
+            }
+        } else if (is_playable(&s_scan_info)) {
+            size_t len = strlen(s_scan_info.fname) + 1;
+            if (nfiles >= MAX_FILES || names_used + len > sizeof(s_names)) {
+                printf("WARNING: too many playable files in %s -- playing only the first %d\n",
+                       dir_path, nfiles);
+            } else {
+                memcpy(s_names + names_used, s_scan_info.fname, len);
+                s_name_off[nfiles++] = (uint16_t)names_used;
+                names_used += len;
+            }
+        }
+        if (f_findnext(&s_scan_dir, &s_scan_info) != FR_OK) break;
+    }
+    f_closedir(&s_scan_dir);
+
+    if (nfiles > 0) {
+        printf("%s: %d playable file(s)\n", dir_path, nfiles);
+        s_found_this_pass += nfiles;
+        if (player_config_shuffle_enabled()) {
+            shuffle_name_off(s_name_off, nfiles);
+        } else {
+            qsort(s_name_off, nfiles, sizeof(s_name_off[0]), name_cmp);
+        }
+        for (int i = 0; i < nfiles; i++) {
+            if (play_one(dir_path, s_names + s_name_off[i])) s_played_this_pass++;
+        }
+    }
+
+    // Recurse only after this level is fully done with the shared scan state
+    // and with s_names/s_name_off -- see this function's own doc comment.
+    for (int i = 0; i < nsubdirs; i++) {
+        const char *sub = s_subdir_names[depth] + s_subdir_off[depth][i];
+        snprintf(s_dir_path[depth + 1], DIR_PATH_BUF_SZ, "%s/%s", dir_path, sub);
+        visit_dir(depth + 1);
+    }
+}
+
 // Returns true if playback was attempted, false if the file was skipped
 // (not a .vgm/.vgz, decompression failed, or it needs a chip that vgmplay.ini
 // has disabled -- see the chip-availability check below).
 static bool play_one(const char *dir_path, const char *fname) {
-    char full_path[300];
+    // dir_path can be several [player] recursive levels deep (see
+    // DIR_PATH_BUF_SZ above) plus a long filename, so this needs a bit more
+    // headroom than a root-only "0:/name.vgm" ever did. A combination that's
+    // both maximally deep AND has a maximally long name at every level would
+    // still truncate here -- snprintf() makes that a graceful "file not
+    // found" (logged, skipped) rather than a buffer overrun, and it's not a
+    // realistic real-world folder layout.
+    char full_path[DIR_PATH_BUF_SZ + 256];
     snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, fname);
 
     const char *play_path = full_path;
@@ -176,10 +310,6 @@ int main(void) {
         sleep_ms(1000);
     }
 
-    gpio_init(PIN_BTN_SKIP);
-    gpio_set_dir(PIN_BTN_SKIP, GPIO_IN);
-    gpio_pull_up(PIN_BTN_SKIP);
-
     oled_ui_init(); // I2C0 on GPIO0/1 + core1 render loop (no-op if no panel)
 
     static FATFS fs;
@@ -192,8 +322,18 @@ int main(void) {
 
     // Optional per-chip enable/disable + CS-pin remap from the SD card
     // (vgmplay.ini, or the first vgmplay*.ini). Must run before
-    // slave_bus_init() -- it acts on the routing table.
+    // slave_bus_init() -- it acts on the routing table -- and before the
+    // skip-button gpio_init below, which needs to know the final pin.
     player_config_autoload();
+
+    int cfg_skip_gpio = player_config_skip_button_gpio();
+    if (cfg_skip_gpio >= 0) s_btn_skip_gpio = (uint)cfg_skip_gpio;
+    gpio_init(s_btn_skip_gpio);
+    gpio_set_dir(s_btn_skip_gpio, GPIO_IN);
+    gpio_pull_up(s_btn_skip_gpio);
+    // So slave_bus_init()'s reserved-pin check warns about wherever the
+    // button actually is, not just its firmware default.
+    slave_bus_set_skip_button_gpio(s_btn_skip_gpio);
 
     slave_bus_init();
     printf("slave bus initialized\n");
@@ -217,55 +357,24 @@ int main(void) {
     }
     printf("slave settle window done\n");
 
-    const char *dir_path = "0:";
+    // Each pass: walk the SD card root (and, if [player] recursive = yes,
+    // every subdirectory under it too -- see visit_dir()) and play whatever
+    // is found. Re-scanning from scratch every pass (rather than caching the
+    // list) means a card swapped/edited between passes is picked up without
+    // a reboot, same as it always was for the root-only case.
     for (;;) {
-        DIR dir;
-        FILINFO info;
-        if (f_findfirst(&dir, &info, dir_path, "*") != FR_OK) {
-            printf("ERROR: could not list SD card root directory, retrying...\n");
-            sleep_ms(1000);
-            continue;
-        }
+        s_played_this_pass = 0;
+        s_found_this_pass = 0;
+        snprintf(s_dir_path[0], DIR_PATH_BUF_SZ, "0:");
+        visit_dir(0);
 
-        // Pass 1: collect every playable filename into s_names[].
-        int nfiles = 0;
-        size_t names_used = 0;
-        while (info.fname[0] != 0) {
-            if (is_playable(&info)) {
-                size_t len = strlen(info.fname) + 1;
-                if (nfiles >= MAX_FILES || names_used + len > sizeof(s_names)) {
-                    printf("WARNING: too many playable files for the buffer -- "
-                           "playing only the first %d this pass\n", nfiles);
-                    break;
-                }
-                memcpy(s_names + names_used, info.fname, len);
-                s_name_off[nfiles++] = (uint16_t)names_used;
-                names_used += len;
-            }
-            if (f_findnext(&dir, &info) != FR_OK) break;
-        }
-        f_closedir(&dir);
-
-        if (nfiles == 0) {
-            printf("no .vgm/.vgz files found on the SD card root, retrying...\n");
+        if (s_found_this_pass == 0) {
+            printf("%s", player_config_recursive_enabled()
+                       ? "no .vgm/.vgz files found on the SD card (root or any subfolder), retrying...\n"
+                       : "no .vgm/.vgz files found on the SD card root, retrying...\n");
             oled_ui_set_status("No .vgm files on card");
             sleep_ms(1000); // avoid a tight spin on an empty card
-            continue;
-        }
-
-        // Pass 2: play them in case-insensitive sorted order, or a freshly
-        // randomised order if vgmplay.ini's [player] shuffle = yes (re-shuffled
-        // every time this outer loop starts a new pass over the SD card).
-        if (player_config_shuffle_enabled()) {
-            shuffle_name_off(s_name_off, nfiles);
-        } else {
-            qsort(s_name_off, nfiles, sizeof(s_name_off[0]), name_cmp);
-        }
-        int played = 0;
-        for (int i = 0; i < nfiles; i++) {
-            if (play_one(dir_path, s_names + s_name_off[i])) played++;
-        }
-        if (played == 0) {
+        } else if (s_played_this_pass == 0) {
             // Every file this pass was skipped (all need chips that are
             // disabled/absent in vgmplay.ini). Don't re-scan the card at full
             // tilt -- wait a beat so the skip lines stay readable.

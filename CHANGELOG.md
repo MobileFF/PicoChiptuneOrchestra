@@ -138,6 +138,33 @@
   ルートを再生し直すたびに(`pico_rand`のハードウェア乱数で)ランダムな順に
   再生するようになります。設定ファイル・`tools/config_gui/`のGUIツール双方から
   編集可能。実機確認済み(2026-09-15)。
+- **スキップボタンのGPIO変更(`[player] skip_button`)と冒頭プレビュー再生
+  (`[player] preview` / `preview_seconds`)**: スキップボタンは既定でGPIO2固定
+  だったが、クローン基板(例: 「USR」ボタンがGPIO24にある基板)向けに
+  `vgmplay.ini`の`[player]`セクションで`skip_button = <0-28>`として変更可能に
+  なった(適用は`slave_bus_init()`より前、SD再マウント直後)。あわせて
+  `preview = yes`にすると、各曲を`preview_seconds`(既定30)秒再生した時点で
+  スキップボタンを押したのと同じ扱いで次の曲へ進む「試聴モード」を追加
+  (`vgm_player_elapsed_seconds()`をポーリングする形で実装、`vgm_player.c`本体は
+  無変更)。`tools/host_tests/test_player_config.c`にキーの解析テストを追加。
+  あわせて、`slave_bus.c`のCS予約ピン警告がスキップボタン移動後も追随するよう
+  修正(`slave_bus_set_skip_button_gpio()`追加、固定だった`case 2`を撤廃)。
+  `tools/config_gui/vgmplay_config_gui.py`のGUI/CLIにも同じ3キー
+  (`skip_button`/`preview`/`preview_seconds`)を追加し、予約ピン判定も
+  同様に動的化(`tools/config_gui/test_vgmplay_config_gui.py`にテスト追加)。
+  未実機確認(GPIO24へのボタン配線含む)。
+- **SDカードのフォルダを再帰的に走査する再生モード(`[player] recursive`)**:
+  既定はこれまで通りルート直下の`.vgm`/`.vgz`のみ。`recursive = yes`にすると
+  カード内の全サブフォルダを深さ優先で走査し、フォルダごとに全ファイルを
+  再生してから次のフォルダへ進む(`shuffle`はフォルダ単位で適用、カード全体を
+  混ぜて1つのリストにはしない)。`main.c`のcore0スタックが2KBしかない
+  (OLED起動不良の原因になった過去のHardFault、上記参照)ことを踏まえ、素朴な
+  再帰関数呼び出しは避け、ディレクトリパス・サブフォルダ名一覧を`depth`で
+  引く`static`配列に置き、FatFsの`DIR`/`FILINFO`スキャン用ハンドルも
+  レベル間で使い回す1個の`static`変数にすることで、再帰の深さ(既定上限4)に
+  スタック使用量が比例して増えないようにした。基本動作は実機で確認済み。
+  `tools/config_gui/vgmplay_config_gui.py`のGUI/CLIにも`recursive`キーを追加
+  (`tools/config_gui/test_vgmplay_config_gui.py`にテスト追加)。
 
 ## [0.1.0] - 2026-09-04
 

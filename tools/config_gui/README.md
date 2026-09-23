@@ -3,7 +3,10 @@
 A small tkinter desktop app for editing the SD-card config file
 ([`firmware/vgmplay.ini`](../../firmware/vgmplay.ini) / the copy on your SD
 card). Per sound chip: enable/disable, chip-select GPIO, and an optional
-per-byte CS-pulse gap. See [docs/circuit.md 1.2](../../docs/circuit.md).
+per-byte CS-pulse gap. Plus general playback settings: shuffle, the skip
+button's GPIO, preview mode (cut every song short after N seconds), and
+recursive mode (walk every subfolder instead of just the SD card root). See
+[docs/circuit.md 1.2](../../docs/circuit.md).
 
 ## Run
 
@@ -26,12 +29,22 @@ and Linux.
 
 In the window: tick **Enabled**, set **CS GPIO** (0–28) and optionally
 **Gap (µs)** (leave blank to use the firmware default), then **Save** /
-**Save As…** straight onto the SD card. **Validate** and every save flag:
+**Save As…** straight onto the SD card. Above the chip table: **Shuffle**,
+**Skip button GPIO** (blank = firmware default GPIO2 — set this for a clone
+board whose built-in button is wired elsewhere, e.g. a "USR" button on
+GPIO24), **Preview mode** and **Preview seconds** (blank = firmware default
+30; cuts every song short and advances, as if the skip button had been
+pressed — for auditioning a whole card quickly), and **Recursive** (walks
+every subfolder on the card, playing each folder's files in turn, instead of
+just the root — shuffle still applies per folder, not globally). **Validate**
+and every save flag:
 
 - CS GPIO out of range (error)
-- CS on a pin the master already uses — 0/1 OLED, 2 skip button, 10/11 slave
-  bus, 16–19 SD card (warning)
+- CS on a pin the master already uses — 0/1 OLED, the skip button's GPIO
+  (wherever it's currently set, default 2), 10/11 slave bus, 16–19 SD card
+  (warning)
 - two enabled chips sharing a CS GPIO (warning)
+- skip_button/preview_seconds out of range (error)
 
 The parser matches the firmware (`src/master/src/player_config.c`): section names
 ignore case, `-`, `_` and spaces (`[AY-3-8910]` == `[ay8910]`), the same key

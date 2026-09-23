@@ -28,8 +28,16 @@ static bool name_matches(const char *raw, const char *key) {
 // Not a chip -- see player_config.h's [player] section doc comment.
 #define SECTION_PLAYER (-2)
 static bool s_shuffle_enabled = false;
+static int s_skip_button_gpio = -1; // -1 = not set, caller keeps its own default
+static bool s_preview_enabled = false;
+static uint32_t s_preview_seconds = 30;
+static bool s_recursive_enabled = false;
 
 bool player_config_shuffle_enabled(void) { return s_shuffle_enabled; }
+int player_config_skip_button_gpio(void) { return s_skip_button_gpio; }
+bool player_config_preview_enabled(void) { return s_preview_enabled; }
+uint32_t player_config_preview_seconds(void) { return s_preview_seconds; }
+bool player_config_recursive_enabled(void) { return s_recursive_enabled; }
 
 static int lookup_chip(const char *raw) {
     static const struct { const char *key; int id; } KEYS[] = {
@@ -125,6 +133,23 @@ int player_config_apply(const char *text) {
             if (!strcasecmp(key, "shuffle")) {
                 bool b;
                 if (parse_bool(val, &b)) { s_shuffle_enabled = b; applied++; }
+                else printf("config: bad boolean '%s' for %s\n", val, key);
+            } else if (!strcasecmp(key, "skip_button") || !strcasecmp(key, "skip_gpio") ||
+                       !strcasecmp(key, "skip_pin")) {
+                uint32_t u;
+                if (parse_uint(val, &u) && u <= 28) { s_skip_button_gpio = (int)u; applied++; }
+                else printf("config: bad number '%s' for %s (0-28)\n", val, key);
+            } else if (!strcasecmp(key, "preview")) {
+                bool b;
+                if (parse_bool(val, &b)) { s_preview_enabled = b; applied++; }
+                else printf("config: bad boolean '%s' for %s\n", val, key);
+            } else if (!strcasecmp(key, "preview_seconds")) {
+                uint32_t u;
+                if (parse_uint(val, &u) && u > 0) { s_preview_seconds = u; applied++; }
+                else printf("config: bad number '%s' for %s (>0)\n", val, key);
+            } else if (!strcasecmp(key, "recursive")) {
+                bool b;
+                if (parse_bool(val, &b)) { s_recursive_enabled = b; applied++; }
                 else printf("config: bad boolean '%s' for %s\n", val, key);
             } else {
                 printf("config: unknown key '%s' in [player], ignored\n", key);

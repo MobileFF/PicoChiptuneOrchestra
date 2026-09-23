@@ -3,8 +3,10 @@
 
 Per sound chip: enable/disable, chip-select GPIO, an optional per-byte
 CS-pulse gap (microseconds), and an optional output volume (percent of
-unity, 0-255). Plus one general (non-chip) setting: shuffle playback order.
-Mirrors the firmware parser in master/src/player_config.c -- section names
+unity, 0-255). Plus general (non-chip) settings: shuffle playback order,
+the skip button's GPIO, preview mode (cut every song short after N
+seconds), and recursive mode (walk every subfolder instead of just the SD
+card root). Mirrors the firmware parser in master/src/player_config.c -- section names
 ignore case / '-' / '_' / space, the same key aliases are accepted, and the
 same reserved-pin / duplicate-CS checks are surfaced as warnings.
 
@@ -63,14 +65,20 @@ KEY_ALIASES = {
 BOOL_TRUE = {"1", "on", "yes", "true", "enabled", "enable"}
 BOOL_FALSE = {"0", "off", "no", "false", "disabled", "disable"}
 
-# GPIO -> what the master already uses it for (a CS here fights that peripheral)
+# GPIO -> what the master already uses it for (a CS here fights that peripheral).
+# The skip button is NOT in this static table -- its GPIO is configurable
+# ([player] skip_button, default 2), so validate() adds it dynamically from
+# whatever the current rows say (mirrors slave_bus.c's
+# slave_bus_set_skip_button_gpio(), which does the same on the firmware side).
 RESERVED_PINS = {
-    0: "OLED I2C0 SDA", 1: "OLED I2C0 SCL", 2: "skip button",
+    0: "OLED I2C0 SDA", 1: "OLED I2C0 SCL",
     10: "slave bus SPI1 SCK", 11: "slave bus SPI1 MOSI",
     16: "SD card SPI0 MISO", 17: "SD card SPI0 CS",
     18: "SD card SPI0 SCK", 19: "SD card SPI0 MOSI",
 }
 CS_MIN, CS_MAX = 0, 28
+DEFAULT_SKIP_BUTTON_GPIO = 2       # master/src/main.c's PIN_BTN_SKIP
+DEFAULT_PREVIEW_SECONDS = 30       # master/src/player_config.c's s_preview_seconds
 
 INI_HEADER = """\
 ; vgmplay.ini -- VGM multi-MCU player (master) configuration
@@ -100,7 +108,8 @@ def parse_ini(text):
     """Return (settings, notes).
 
     settings: {canonical_chip: {"enabled": bool?, "cs": int?, "gap": int?,
-    "volume": int?}, PLAYER_SECTION: {"shuffle": bool?}}
+    "volume": int?}, PLAYER_SECTION: {"shuffle": bool?, "skip_button": int?,
+    "preview": bool?, "preview_seconds": int?}}
     notes:    list of human-readable strings about anything odd in the file.
     """
     settings = {}
@@ -132,12 +141,37 @@ def parse_ini(text):
             notes.append(f"line {lineno}: '{rawkey.strip()}' outside any [chip] section, skipped")
             continue
         if cur == PLAYER_SECTION:
-            if _norm(rawkey) == "shuffle":
+            nk = _norm(rawkey)
+            if nk == "shuffle":
                 b = parse_bool(val)
                 if b is None:
                     notes.append(f"line {lineno}: bad boolean '{val}' for shuffle")
                 else:
                     settings.setdefault(PLAYER_SECTION, {})["shuffle"] = b
+            elif nk in ("skipbutton", "skipgpio", "skippin"):
+                if not re.fullmatch(r"\d+", val):
+                    notes.append(f"line {lineno}: bad number '{val}' for skip_button")
+                elif not (CS_MIN <= int(val) <= CS_MAX):
+                    notes.append(f"line {lineno}: skip_button GPIO{val} out of range ({CS_MIN}-{CS_MAX})")
+                else:
+                    settings.setdefault(PLAYER_SECTION, {})["skip_button"] = int(val)
+            elif nk == "preview":
+                b = parse_bool(val)
+                if b is None:
+                    notes.append(f"line {lineno}: bad boolean '{val}' for preview")
+                else:
+                    settings.setdefault(PLAYER_SECTION, {})["preview"] = b
+            elif nk == "previewseconds":
+                if not re.fullmatch(r"\d+", val) or int(val) == 0:
+                    notes.append(f"line {lineno}: bad number '{val}' for preview_seconds (>0)")
+                else:
+                    settings.setdefault(PLAYER_SECTION, {})["preview_seconds"] = int(val)
+            elif nk == "recursive":
+                b = parse_bool(val)
+                if b is None:
+                    notes.append(f"line {lineno}: bad boolean '{val}' for recursive")
+                else:
+                    settings.setdefault(PLAYER_SECTION, {})["recursive"] = b
             else:
                 notes.append(f"line {lineno}: unknown key '{rawkey.strip()}' in [player], ignored")
             continue
@@ -164,7 +198,9 @@ def rows_from_settings(settings):
     """Merge parsed settings over the built-in defaults into a full row dict.
 
     Includes CHIP_ORDER's per-chip rows plus one PLAYER_SECTION entry
-    ({"shuffle": bool}) for the non-chip [player] section.
+    ({"shuffle": bool, "skip_button": int?, "preview": bool,
+    "preview_seconds": int?, "recursive": bool}) for the non-chip [player]
+    section.
     """
     rows = {}
     for chip in CHIP_ORDER:
@@ -175,14 +211,22 @@ def rows_from_settings(settings):
             "gap": s.get("gap", None),  # None -> use firmware default, no line written
             "volume": s.get("volume", None),  # None -> use firmware default (100), no line written
         }
-    rows[PLAYER_SECTION] = {"shuffle": settings.get(PLAYER_SECTION, {}).get("shuffle", False)}
+    p = settings.get(PLAYER_SECTION, {})
+    rows[PLAYER_SECTION] = {
+        "shuffle": p.get("shuffle", False),
+        "skip_button": p.get("skip_button", None),  # None -> firmware default GPIO2, no line written
+        "preview": p.get("preview", False),
+        "preview_seconds": p.get("preview_seconds", None),  # None -> firmware default 30, no line written
+        "recursive": p.get("recursive", False),
+    }
     return rows
 
 
 def default_rows():
     rows = {chip: {"enabled": True, "cs": DEFAULT_CS[chip], "gap": None, "volume": None}
             for chip in CHIP_ORDER}
-    rows[PLAYER_SECTION] = {"shuffle": False}
+    rows[PLAYER_SECTION] = {"shuffle": False, "skip_button": None, "preview": False,
+                             "preview_seconds": None, "recursive": False}
     return rows
 
 
@@ -190,6 +234,12 @@ def generate_ini(rows):
     out = [INI_HEADER]
     out.append("[player]")
     out.append(f"shuffle = {'yes' if rows[PLAYER_SECTION]['shuffle'] else 'no'}")
+    if rows[PLAYER_SECTION]["skip_button"] is not None:
+        out.append(f"skip_button = {int(rows[PLAYER_SECTION]['skip_button'])}")
+    out.append(f"preview = {'yes' if rows[PLAYER_SECTION]['preview'] else 'no'}")
+    if rows[PLAYER_SECTION]["preview_seconds"] is not None:
+        out.append(f"preview_seconds = {int(rows[PLAYER_SECTION]['preview_seconds'])}")
+    out.append(f"recursive = {'yes' if rows[PLAYER_SECTION]['recursive'] else 'no'}")
     out.append("")
     for chip in CHIP_ORDER:
         r = rows[chip]
@@ -208,6 +258,32 @@ def validate(rows):
     """Return (errors, warnings) -- both lists of strings."""
     errors, warnings = [], []
     used = {}
+
+    skip_gpio = rows[PLAYER_SECTION]["skip_button"]
+    if skip_gpio is None:
+        skip_gpio = DEFAULT_SKIP_BUTTON_GPIO
+    else:
+        try:
+            skip_gpio = int(skip_gpio)
+            if not (CS_MIN <= skip_gpio <= CS_MAX):
+                errors.append(f"skip_button GPIO{skip_gpio} out of range ({CS_MIN}-{CS_MAX})")
+        except (TypeError, ValueError):
+            errors.append(f"skip_button '{rows[PLAYER_SECTION]['skip_button']}' is not a number")
+            skip_gpio = None
+    # Reserved dynamically (not in the static RESERVED_PINS table) since it's
+    # configurable -- mirrors slave_bus.c's slave_bus_set_skip_button_gpio().
+    reserved = dict(RESERVED_PINS)
+    if skip_gpio is not None:
+        reserved[skip_gpio] = "skip button"
+
+    if rows[PLAYER_SECTION]["preview_seconds"] is not None:
+        try:
+            ps = int(rows[PLAYER_SECTION]["preview_seconds"])
+            if ps <= 0:
+                errors.append(f"preview_seconds {ps} must be > 0")
+        except (TypeError, ValueError):
+            errors.append(f"preview_seconds '{rows[PLAYER_SECTION]['preview_seconds']}' is not a number")
+
     for chip in CHIP_ORDER:
         r = rows[chip]
         name = DISPLAY[chip]
@@ -234,8 +310,8 @@ def validate(rows):
                 errors.append(f"{name}: volume '{r['volume']}' is not a number")
         if not r["enabled"]:
             continue
-        if cs in RESERVED_PINS:
-            warnings.append(f"{name}: CS GPIO{cs} collides with {RESERVED_PINS[cs]}")
+        if cs in reserved:
+            warnings.append(f"{name}: CS GPIO{cs} collides with {reserved[cs]}")
         if cs in used:
             warnings.append(f"{name}: CS GPIO{cs} also used by {used[cs]}")
         else:
@@ -271,7 +347,11 @@ def run_check(path):
     settings, notes = parse_ini(text)
     rows = rows_from_settings(settings)
     print(f"# parsed {path}\n")
-    print(f"  [player]   shuffle={rows[PLAYER_SECTION]['shuffle']}")
+    p = rows[PLAYER_SECTION]
+    skip_disp = "default(2)" if p["skip_button"] is None else p["skip_button"]
+    prevsec_disp = "default(30)" if p["preview_seconds"] is None else p["preview_seconds"]
+    print(f"  [player]   shuffle={p['shuffle']} skip_button={skip_disp} "
+          f"preview={p['preview']} preview_seconds={prevsec_disp} recursive={p['recursive']}")
     for chip in CHIP_ORDER:
         r = rows[chip]
         gap = "default" if r["gap"] is None else r["gap"]
@@ -304,7 +384,11 @@ def run_gui(initial_path=None):
 
     state = {"path": None}
     vars_ = {}  # chip -> {"enabled": BooleanVar, "cs": StringVar, "gap": StringVar, "volume": StringVar}
-    shuffle_var = tk.BooleanVar(value=False)  # [player] shuffle
+    shuffle_var = tk.BooleanVar(value=False)     # [player] shuffle
+    skip_button_var = tk.StringVar(value="")     # [player] skip_button (blank = default 2)
+    preview_var = tk.BooleanVar(value=False)     # [player] preview
+    preview_seconds_var = tk.StringVar(value="") # [player] preview_seconds (blank = default 30)
+    recursive_var = tk.BooleanVar(value=False)   # [player] recursive
 
     # ---- widgets ----
     pathvar = tk.StringVar(value="(new file - not saved yet)")
@@ -313,8 +397,26 @@ def run_gui(initial_path=None):
 
     playerf = ttk.Frame(root, padding=(8, 0))
     playerf.pack(fill="x")
-    ttk.Checkbutton(playerf, text="Shuffle playback (random order, re-shuffled every pass)",
+    row1 = ttk.Frame(playerf)
+    row1.pack(fill="x")
+    ttk.Checkbutton(row1, text="Shuffle playback (random order, re-shuffled every pass)",
                     variable=shuffle_var).pack(side="left")
+    ttk.Label(row1, text="Skip button GPIO:").pack(side="left", padx=(18, 4))
+    ttk.Spinbox(row1, from_=CS_MIN, to=CS_MAX, width=5, textvariable=skip_button_var).pack(side="left")
+    ttk.Label(row1, text="(blank = default 2)", foreground="#777").pack(side="left", padx=(4, 0))
+
+    row2 = ttk.Frame(playerf)
+    row2.pack(fill="x", pady=(4, 0))
+    ttk.Checkbutton(row2, text="Preview mode (cut every song short)",
+                    variable=preview_var).pack(side="left")
+    ttk.Label(row2, text="Preview seconds:").pack(side="left", padx=(18, 4))
+    ttk.Spinbox(row2, from_=1, to=9999, width=6, textvariable=preview_seconds_var).pack(side="left")
+    ttk.Label(row2, text="(blank = default 30)", foreground="#777").pack(side="left", padx=(4, 0))
+
+    row3 = ttk.Frame(playerf)
+    row3.pack(fill="x", pady=(4, 0))
+    ttk.Checkbutton(row3, text="Recursive (walk every subfolder, not just the SD card root)",
+                    variable=recursive_var).pack(side="left")
 
     grid = ttk.Frame(root, padding=8)
     grid.pack(fill="x")
@@ -370,7 +472,15 @@ def run_gui(initial_path=None):
                 "gap": (int(g) if re.fullmatch(r"\d+", g) else (None if g == "" else g)),
                 "volume": (int(vol) if re.fullmatch(r"\d+", vol) else (None if vol == "" else vol)),
             }
-        rows[PLAYER_SECTION] = {"shuffle": bool(shuffle_var.get())}
+        skip = skip_button_var.get().strip()
+        prevsec = preview_seconds_var.get().strip()
+        rows[PLAYER_SECTION] = {
+            "shuffle": bool(shuffle_var.get()),
+            "skip_button": (int(skip) if re.fullmatch(r"\d+", skip) else (None if skip == "" else skip)),
+            "preview": bool(preview_var.get()),
+            "preview_seconds": (int(prevsec) if re.fullmatch(r"\d+", prevsec) else (None if prevsec == "" else prevsec)),
+            "recursive": bool(recursive_var.get()),
+        }
         return rows
 
     def form_from_rows(rows):
@@ -381,7 +491,12 @@ def run_gui(initial_path=None):
             v["cs"].set(str(r["cs"]))
             v["gap"].set("" if r["gap"] is None else str(r["gap"]))
             v["volume"].set("" if r["volume"] is None else str(r["volume"]))
-        shuffle_var.set(bool(rows[PLAYER_SECTION]["shuffle"]))
+        p = rows[PLAYER_SECTION]
+        shuffle_var.set(bool(p["shuffle"]))
+        skip_button_var.set("" if p["skip_button"] is None else str(p["skip_button"]))
+        preview_var.set(bool(p["preview"]))
+        preview_seconds_var.set("" if p["preview_seconds"] is None else str(p["preview_seconds"]))
+        recursive_var.set(bool(p["recursive"]))
 
     def do_validate(show_ok=True):
         rows = rows_from_form()
@@ -480,8 +595,9 @@ def run_gui(initial_path=None):
     helpm.add_command(label="About", command=lambda: messagebox.showinfo(
         "About",
         "vgmplay.ini editor\n\nEdits the SD-card config for the VGM multi-MCU "
-        "player.\nReserved master GPIOs: 0/1 (OLED), 2 (skip button), "
-        "10/11 (slave bus), 16-19 (SD).\nCS GPIO range: 0-28."))
+        "player.\nReserved master GPIOs: 0/1 (OLED), the skip button's GPIO "
+        "(default 2, configurable), 10/11 (slave bus), 16-19 (SD).\n"
+        "CS GPIO range: 0-28."))
     menubar.add_cascade(label="Help", menu=helpm)
     root.config(menu=menubar)
     root.bind("<Control-o>", lambda e: do_open())

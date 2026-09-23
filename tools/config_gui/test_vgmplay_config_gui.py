@@ -72,6 +72,68 @@ def test_shuffle_roundtrip_and_aliases():
     assert any("unknown key 'wobble' in [player]" in n for n in notes2)
 
 
+def test_skip_button_and_preview_roundtrip_and_aliases():
+    rows = g.default_rows()
+    assert rows[g.PLAYER_SECTION]["skip_button"] is None       # default: use firmware's own
+    assert rows[g.PLAYER_SECTION]["preview"] is False           # default
+    assert rows[g.PLAYER_SECTION]["preview_seconds"] is None    # default: use firmware's own
+
+    rows[g.PLAYER_SECTION]["skip_button"] = 24
+    rows[g.PLAYER_SECTION]["preview"] = True
+    rows[g.PLAYER_SECTION]["preview_seconds"] = 15
+    s, notes = g.parse_ini(g.generate_ini(rows))
+    assert notes == []
+    assert g.rows_from_settings(s) == rows
+
+    # key aliases + section-name normalisation
+    s2, notes2 = g.parse_ini("[ Player ]\nskip_gpio = 27\nPREVIEW = on\npreview_seconds = 45\n")
+    r2 = g.rows_from_settings(s2)[g.PLAYER_SECTION]
+    assert r2["skip_button"] == 27 and r2["preview"] is True and r2["preview_seconds"] == 45
+    assert notes2 == []
+
+    # out-of-range / bad values are rejected with a note, not silently kept
+    _, notes3 = g.parse_ini("[player]\nskip_button = 99\npreview_seconds = 0\n")
+    assert any("skip_button" in n and "out of range" in n for n in notes3)
+    assert any("preview_seconds" in n for n in notes3)
+
+
+def test_recursive_roundtrip_and_aliases():
+    rows = g.default_rows()
+    assert rows[g.PLAYER_SECTION]["recursive"] is False  # default
+
+    rows[g.PLAYER_SECTION]["recursive"] = True
+    s, notes = g.parse_ini(g.generate_ini(rows))
+    assert notes == []
+    assert g.rows_from_settings(s) == rows
+
+    # section-name normalisation, and a bad boolean is rejected with a note
+    s2, notes2 = g.parse_ini("[ Player ]\nRECURSIVE = on\n")
+    assert g.rows_from_settings(s2)[g.PLAYER_SECTION]["recursive"] is True
+    assert notes2 == []
+
+    _, notes3 = g.parse_ini("[player]\nrecursive = maybe\n")
+    assert any("bad boolean 'maybe' for recursive" in n for n in notes3)
+
+
+def test_skip_button_reserved_pin_is_dynamic():
+    # Default skip button (GPIO2, unset) still collides with a CS on GPIO2.
+    e, w = g.validate({**g.default_rows(),
+                       "scc": {"enabled": True, "cs": 2, "gap": None, "volume": None}})
+    assert e == [] and any("skip button" in x for x in w)
+
+    # Moving the skip button off GPIO2 frees it up -- no more collision there,
+    # but the chip now sharing the NEW skip button GPIO gets flagged instead.
+    rows = {**g.default_rows(),
+            "scc": {"enabled": True, "cs": 2, "gap": None, "volume": None}}
+    rows[g.PLAYER_SECTION] = {**rows[g.PLAYER_SECTION], "skip_button": 24}
+    e, w = g.validate(rows)
+    assert e == [] and not any("skip button" in x for x in w)
+
+    rows["scc"]["cs"] = 24
+    e, w = g.validate(rows)
+    assert e == [] and any("GPIO24 collides with skip button" in x for x in w)
+
+
 def test_aliases_and_normalisation():
     s, _ = g.parse_ini(
         "[SN76489]\nEnable = No\n"

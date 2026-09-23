@@ -22,6 +22,12 @@ void slave_bus_set_gap_us(vgm_chip_id_t chip, uint32_t gap_us);
 // the slave via VGMSPI_OP_VOLUME, redundantly alongside RESET -- see
 // vgm_spi_protocol.h and player_config.h's `volume` ini key.
 void slave_bus_set_volume_pct(vgm_chip_id_t chip, uint8_t pct);
+// Tells slave_bus_init()'s reserved-pin check where the skip button actually
+// is (default 2; see main.c's PIN_BTN_SKIP / player_config.h's
+// [player] skip_button), so a CS remapped onto it is still warned about even
+// when the button has been moved off its default GPIO. Call before
+// slave_bus_init(). A value outside 0-28 is ignored.
+void slave_bus_set_skip_button_gpio(unsigned gpio);
 
 // True if this build's routing table has a slave wired up for this chip.
 bool slave_bus_has_chip(vgm_chip_id_t chip);

@@ -27,10 +27,33 @@
 //                        ; pass's playlist in random order (re-shuffled every
 //                        ; time the whole SD card root is replayed) instead
 //                        ; of case-insensitive alphabetical order.
+//   skip_button = 2      ; optional: master GPIO for the "next song" button
+//                        ; (0-28; to GND, internal pull-up). Default 2 (a
+//                        ; genuine Pico's usual wiring) -- override for a
+//                        ; clone board whose built-in button is wired
+//                        ; elsewhere (e.g. a "USR" button on GPIO24).
+//   preview = no         ; yes/no (default no). When yes, each song is cut
+//                        ; short after `preview_seconds` of song time
+//                        ; (counting through loop points) and playback
+//                        ; advances to the next file, as if the skip button
+//                        ; had been pressed -- for auditioning a whole card
+//                        ; quickly.
+//   preview_seconds = 30 ; optional: seconds per song when preview is on
+//                        ; (default 30). Ignored when preview = no.
+//   recursive = no       ; yes/no (default no). When no (default), only the
+//                        ; SD card ROOT directory's .vgm/.vgz files are
+//                        ; played (subdirectories are ignored, as always).
+//                        ; When yes, main.c also walks every subdirectory
+//                        ; (depth-first, bounded -- see MAX_RECURSE_DEPTH in
+//                        ; main.c), playing each folder's .vgm/.vgz files in
+//                        ; turn before moving to the next folder. shuffle/
+//                        ; sort order still applies PER FOLDER, not globally
+//                        ; across the whole card.
 #pragma once
 
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdint.h>
 
 // Parse `text` (NUL-terminated) and apply each setting via the
 // slave_bus_set_* functions. Returns the number of settings applied.
@@ -39,6 +62,20 @@ int player_config_apply(const char *text);
 
 // [player] shuffle = yes|no, default false. Read by main.c's playlist loop.
 bool player_config_shuffle_enabled(void);
+
+// [player] skip_button = <gpio>. -1 if not set (caller uses its own built-in
+// default). Read by main.c before it gpio_inits the button pin.
+int player_config_skip_button_gpio(void);
+
+// [player] preview = yes|no, default false. Read by main.c's playlist loop.
+bool player_config_preview_enabled(void);
+
+// [player] preview_seconds = <n>, default 30. Only meaningful when
+// player_config_preview_enabled() is true.
+uint32_t player_config_preview_seconds(void);
+
+// [player] recursive = yes|no, default false. Read by main.c's playlist loop.
+bool player_config_recursive_enabled(void);
 
 // Read `path` from the mounted filesystem and hand it to
 // player_config_apply(). Call after f_mount, before slave_bus_init().

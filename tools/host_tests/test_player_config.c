@@ -56,14 +56,26 @@ int main(void) {
         "\n"
         "[player]\n"             // not a chip -- general playback settings
         "shuffle = yes\n"
+        "skip_button = 24\n"     // clone board's USR button, e.g.
+        "preview = on\n"
+        "preview_seconds = 15\n"
+        "recursive = yes\n"
         "wobble = 3\n";          // unknown key in [player] -> ignored
 
     int fail = 0;
     #define CHK(c) do { if (!(c)) { printf("FAIL: %s\n", #c); fail = 1; } } while (0)
 
     CHK(player_config_shuffle_enabled() == false); // default before parsing
+    CHK(player_config_skip_button_gpio() == -1);   // default: not set
+    CHK(player_config_preview_enabled() == false); // default before parsing
+    CHK(player_config_preview_seconds() == 30);    // built-in default
+    CHK(player_config_recursive_enabled() == false); // default before parsing
     int n = player_config_apply(cfg);
     CHK(player_config_shuffle_enabled() == true);   // [player] shuffle = yes
+    CHK(player_config_skip_button_gpio() == 24);    // [player] skip_button = 24
+    CHK(player_config_preview_enabled() == true);   // [player] preview = on
+    CHK(player_config_preview_seconds() == 15);     // [player] preview_seconds = 15
+    CHK(player_config_recursive_enabled() == true); // [player] recursive = yes
 
     CHK(g_present[VGM_CHIP_SN76489] == 0);          // enabled = no
     CHK(g_cs[VGM_CHIP_AY8910] == 7);                // [AY-3-8910] cs, inline comment stripped
@@ -77,7 +89,9 @@ int main(void) {
     CHK(g_cs[VGM_CHIP_SCC] == 28);
     CHK(g_present[VGM_CHIP_YM2612] == -1);          // never mentioned -> untouched
     CHK(g_cs[VGM_CHIP_YM2612] == -1);
-    CHK(n == 8); // sn.enabled, ay.cs, ay.gap, ay.volume, segapcm.enabled, segapcm.cs, scc.cs, player.shuffle
+    CHK(n == 12); // sn.enabled, ay.cs, ay.gap, ay.volume, segapcm.enabled, segapcm.cs, scc.cs,
+                  // player.shuffle, player.skip_button, player.preview, player.preview_seconds,
+                  // player.recursive
 
     printf("applied=%d\n", n);
     printf(fail ? "FAILED\n" : "ok\n");
