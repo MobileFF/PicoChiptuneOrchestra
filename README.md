@@ -1,5 +1,7 @@
 # PicoChiptuneOrchestra
 
+![プロトタイプ実装](images/PCTO_prototype_implementation.jpg)
+
 Raspberry Pi Pico で実現する分散マルチMCU方式のレトロサウンドチップ・エミュレータ。
 [VGMPlay](https://github.com/vgmrips/vgmplay) 本家とは無関係の独自実装です。
 
