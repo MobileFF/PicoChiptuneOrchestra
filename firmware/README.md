@@ -24,8 +24,9 @@ BOOTSELドライブにコピーするだけで書き込めます。
 書き込み方法: 各Pico/Pico2/RP2040-ZeroをBOOTSELボタンを押しながらUSB接続するとUF2ドライブとして
 マウントされるので、対応する`.uf2`をコピーするだけです。
 
-**`vgmplay.ini`**: チップごとの有効/無効とCSピンのGPIO番号を再ビルドなしで変えるための設定
-ファイルのひな形です。SDカードのルート(`.vgm`/`.vgz`と同じ場所)にコピーして編集してください。
+**`vgmplay.ini`**: チップごとの有効/無効とCSピンのGPIO番号、および曲送りボタンのGPIO変更・
+試聴モード・フォルダ再帰走査などの全般設定(`[player]`セクション)を再ビルドなしで変えるための
+設定ファイルのひな形です。SDカードのルート(`.vgm`/`.vgz`と同じ場所)にコピーして編集してください。
 無くても既定値で動きます。`vgmplay.ini`が無ければ`vgmplay*.ini`(例: `vgmplay_scc.ini`)の
 最初の1つを読みます。書式は[docs/circuit.md 1.2](../docs/circuit.md)参照。GUIエディタ:
 `python3 tools/config_gui/vgmplay_config_gui.py`。

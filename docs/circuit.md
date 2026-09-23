@@ -92,9 +92,14 @@ enabled = no          ; 無効にするとその VGM コマンドは無視され
   1フレームが約8倍速くなり、書き込みの密な曲でも master が追いつきます。ただし連続3バイトを
   確実にクロックインできる配線でのみ安全(初期のブリングアップ基板ではバイト2/3が落ちたため
   既定はバイトごとパルス)。パートがもたつく場合に試し、音の潰れ/ノイズが出たら戻してください。
-- CS を `0-1`(OLED)`2`(スキップボタン)`10-11`(スレーブバス)`16-19`(SD)に割り当てると
+- CS を `0-1`(OLED)、スキップボタンのGPIO(既定`2`、`[player] skip_button`で変更可 --
+  警告は変更後のGPIOに追随します)、`10-11`(スレーブバス)、`16-19`(SD)に割り当てると
   警告ログを出します(動作は続行)。範囲外(29以上)の値は無視。
 - 書き換えたら SD を挿し直して電源再投入。
+- チップごとの設定とは別に、`[player]`セクションで曲送りボタンのGPIO変更(`skip_button`)、
+  試聴モード(`preview`/`preview_seconds`)、SDカード内フォルダの再帰走査(`recursive`)も
+  設定できます。詳細は`src/master/src/player_config.h`のコメント、またはひな形
+  `firmware/vgmplay.ini`のコメントを参照してください。
 - テキストエディタで直接書けますが、GUI エディタもあります:
   `python3 tools/config_gui/vgmplay_config_gui.py`(Python 標準ライブラリのみ、
   [tools/config_gui/README.md](../tools/config_gui/README.md))。

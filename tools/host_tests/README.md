@@ -100,8 +100,10 @@ gcc -O0 -g -Wall -I "$SEGA" test_segapcm_render.c "$SEGA/chip_segapcm.c" \
 ## SD-card config parser (vgmplay.ini)
 
 `src/master/src/player_config.c`'s INI parser (`player_config_apply`) is pure
-string handling; `test_player_config.c` stubs the three `slave_bus_set_*`
-sinks and checks sections, key aliases, name normalisation and bad values:
+string handling; `test_player_config.c` stubs the four `slave_bus_set_*`
+sinks and checks sections, key aliases, name normalisation and bad values
+(including the non-chip `[player]` section's `shuffle`/`skip_button`/
+`preview`/`preview_seconds`/`recursive` keys):
 
 ```sh
 gcc -O0 -g -Wall -I shim -I ../../src/master/src \

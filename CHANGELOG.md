@@ -152,7 +152,7 @@
   `tools/config_gui/vgmplay_config_gui.py`のGUI/CLIにも同じ3キー
   (`skip_button`/`preview`/`preview_seconds`)を追加し、予約ピン判定も
   同様に動的化(`tools/config_gui/test_vgmplay_config_gui.py`にテスト追加)。
-  未実機確認(GPIO24へのボタン配線含む)。
+  実機確認済み(GPIO24へのボタン配線含む、2026-09-23)。
 - **SDカードのフォルダを再帰的に走査する再生モード(`[player] recursive`)**:
   既定はこれまで通りルート直下の`.vgm`/`.vgz`のみ。`recursive = yes`にすると
   カード内の全サブフォルダを深さ優先で走査し、フォルダごとに全ファイルを

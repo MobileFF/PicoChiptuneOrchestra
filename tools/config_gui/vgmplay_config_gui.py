@@ -38,8 +38,8 @@ DEFAULT_CS = {c[0]: c[2] for c in CHIPS}
 DEFAULT_GAP = {c[0]: c[3] for c in CHIPS}
 
 # Sentinel `cur` value for the one non-chip section, [player] (general
-# playback settings -- currently just `shuffle`). Mirrors
-# master/src/player_config.c's SECTION_PLAYER.
+# playback settings: shuffle, skip_button, preview/preview_seconds,
+# recursive). Mirrors master/src/player_config.c's SECTION_PLAYER.
 PLAYER_SECTION = "player"
 
 # normalized section name -> canonical
@@ -109,7 +109,7 @@ def parse_ini(text):
 
     settings: {canonical_chip: {"enabled": bool?, "cs": int?, "gap": int?,
     "volume": int?}, PLAYER_SECTION: {"shuffle": bool?, "skip_button": int?,
-    "preview": bool?, "preview_seconds": int?}}
+    "preview": bool?, "preview_seconds": int?, "recursive": bool?}}
     notes:    list of human-readable strings about anything odd in the file.
     """
     settings = {}
