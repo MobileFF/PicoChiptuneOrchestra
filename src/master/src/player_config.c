@@ -32,12 +32,15 @@ static int s_skip_button_gpio = -1; // -1 = not set, caller keeps its own defaul
 static bool s_preview_enabled = false;
 static uint32_t s_preview_seconds = 30;
 static bool s_recursive_enabled = false;
+#define ROOT_DIR_BUF_SZ 128
+static char s_root_dir[ROOT_DIR_BUF_SZ] = ""; // "" = SD card root
 
 bool player_config_shuffle_enabled(void) { return s_shuffle_enabled; }
 int player_config_skip_button_gpio(void) { return s_skip_button_gpio; }
 bool player_config_preview_enabled(void) { return s_preview_enabled; }
 uint32_t player_config_preview_seconds(void) { return s_preview_seconds; }
 bool player_config_recursive_enabled(void) { return s_recursive_enabled; }
+const char *player_config_root_dir(void) { return s_root_dir; }
 
 static int lookup_chip(const char *raw) {
     static const struct { const char *key; int id; } KEYS[] = {
@@ -151,6 +154,24 @@ int player_config_apply(const char *text) {
                 bool b;
                 if (parse_bool(val, &b)) { s_recursive_enabled = b; applied++; }
                 else printf("config: bad boolean '%s' for %s\n", val, key);
+            } else if (!strcasecmp(key, "root_dir") || !strcasecmp(key, "rootdir") ||
+                       !strcasecmp(key, "folder") || !strcasecmp(key, "dir")) {
+                // Strip an optional FatFs-style "0:" drive prefix and any
+                // leading/trailing slashes, so "0:/GAMES/Sega/", "/GAMES/Sega"
+                // and "GAMES/Sega" all end up stored the same way.
+                const char *v = val;
+                if (!strncasecmp(v, "0:", 2)) v += 2;
+                while (*v == '/') v++;
+                size_t vlen = strlen(v);
+                while (vlen > 0 && v[vlen - 1] == '/') vlen--;
+                if (vlen >= sizeof(s_root_dir)) {
+                    printf("config: root_dir '%s' too long (max %u chars), ignored\n",
+                           val, (unsigned)sizeof(s_root_dir) - 1);
+                } else {
+                    memcpy(s_root_dir, v, vlen);
+                    s_root_dir[vlen] = '\0';
+                    applied++;
+                }
             } else {
                 printf("config: unknown key '%s' in [player], ignored\n", key);
             }

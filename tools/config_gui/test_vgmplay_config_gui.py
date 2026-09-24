@@ -115,6 +115,40 @@ def test_recursive_roundtrip_and_aliases():
     assert any("bad boolean 'maybe' for recursive" in n for n in notes3)
 
 
+def test_root_dir_roundtrip_normalisation_and_aliases():
+    rows = g.default_rows()
+    assert rows[g.PLAYER_SECTION]["root_dir"] == ""  # default: SD card root
+
+    rows[g.PLAYER_SECTION]["root_dir"] = "GAMES/Sega"
+    s, notes = g.parse_ini(g.generate_ini(rows))
+    assert notes == []
+    assert g.rows_from_settings(s) == rows
+
+    # drive prefix + leading/trailing slashes are stripped, matching
+    # player_config.c's own root_dir parsing exactly
+    assert g.normalize_root_dir("0:/GAMES/Sega/") == "GAMES/Sega"
+    assert g.normalize_root_dir("/GAMES/Sega") == "GAMES/Sega"
+    assert g.normalize_root_dir("GAMES/Sega") == "GAMES/Sega"
+
+    # key aliases + section-name normalisation
+    s2, notes2 = g.parse_ini("[ Player ]\nrootdir = 0:/MSX/\n")
+    assert g.rows_from_settings(s2)[g.PLAYER_SECTION]["root_dir"] == "MSX"
+    assert notes2 == []
+    s3, notes3 = g.parse_ini("[player]\nfolder = /Genesis\n")
+    assert g.rows_from_settings(s3)[g.PLAYER_SECTION]["root_dir"] == "Genesis"
+    assert notes3 == []
+    s4, notes4 = g.parse_ini("[player]\ndir = MSX2\n")
+    assert g.rows_from_settings(s4)[g.PLAYER_SECTION]["root_dir"] == "MSX2"
+    assert notes4 == []
+
+    # an empty value clears it back to "" (SD card root); generate_ini()
+    # then omits the line entirely, same as the unset default
+    empty_rows = g.default_rows()
+    assert g.generate_ini(empty_rows) == g.generate_ini({**empty_rows,
+                                                          g.PLAYER_SECTION: {**empty_rows[g.PLAYER_SECTION], "root_dir": ""}})
+    assert "root_dir" not in g.generate_ini(empty_rows)
+
+
 def test_skip_button_reserved_pin_is_dynamic():
     # Default skip button (GPIO2, unset) still collides with a CS on GPIO2.
     e, w = g.validate({**g.default_rows(),
@@ -185,6 +219,17 @@ def test_validate():
                        "scc": {"enabled": True, "cs": 22, "gap": None, "volume": 300}})
     assert any("out of range (0-255)" in x for x in e)
     assert not any("also used by" in x for x in w)
+
+    # root_dir length mirrors player_config.c's own ROOT_DIR_BUF_SZ guard
+    ok_rows = g.default_rows()
+    ok_rows[g.PLAYER_SECTION]["root_dir"] = "x" * (g.ROOT_DIR_BUF_SZ - 1)
+    e, _ = g.validate(ok_rows)
+    assert not any("root_dir" in x for x in e)
+
+    long_rows = g.default_rows()
+    long_rows[g.PLAYER_SECTION]["root_dir"] = "x" * g.ROOT_DIR_BUF_SZ
+    e, _ = g.validate(long_rows)
+    assert any("root_dir is too long" in x for x in e)
 
 
 def test_resolve_config_path():

@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <string.h>
 
 #include "player_config.h"
 #include "vgm_chips.h"
@@ -60,6 +61,7 @@ int main(void) {
         "preview = on\n"
         "preview_seconds = 15\n"
         "recursive = yes\n"
+        "root_dir = 0:/GAMES/Sega/\n" // drive prefix + trailing slash -> stripped
         "wobble = 3\n";          // unknown key in [player] -> ignored
 
     int fail = 0;
@@ -70,12 +72,14 @@ int main(void) {
     CHK(player_config_preview_enabled() == false); // default before parsing
     CHK(player_config_preview_seconds() == 30);    // built-in default
     CHK(player_config_recursive_enabled() == false); // default before parsing
+    CHK(*player_config_root_dir() == '\0');          // default: SD card root
     int n = player_config_apply(cfg);
     CHK(player_config_shuffle_enabled() == true);   // [player] shuffle = yes
     CHK(player_config_skip_button_gpio() == 24);    // [player] skip_button = 24
     CHK(player_config_preview_enabled() == true);   // [player] preview = on
     CHK(player_config_preview_seconds() == 15);     // [player] preview_seconds = 15
     CHK(player_config_recursive_enabled() == true); // [player] recursive = yes
+    CHK(!strcmp(player_config_root_dir(), "GAMES/Sega")); // drive prefix + trailing slash stripped
 
     CHK(g_present[VGM_CHIP_SN76489] == 0);          // enabled = no
     CHK(g_cs[VGM_CHIP_AY8910] == 7);                // [AY-3-8910] cs, inline comment stripped
@@ -89,9 +93,21 @@ int main(void) {
     CHK(g_cs[VGM_CHIP_SCC] == 28);
     CHK(g_present[VGM_CHIP_YM2612] == -1);          // never mentioned -> untouched
     CHK(g_cs[VGM_CHIP_YM2612] == -1);
-    CHK(n == 12); // sn.enabled, ay.cs, ay.gap, ay.volume, segapcm.enabled, segapcm.cs, scc.cs,
+    CHK(n == 13); // sn.enabled, ay.cs, ay.gap, ay.volume, segapcm.enabled, segapcm.cs, scc.cs,
                   // player.shuffle, player.skip_button, player.preview, player.preview_seconds,
-                  // player.recursive
+                  // player.recursive, player.root_dir
+
+    // root_dir aliases + a plain (no prefix/slashes) value + an empty value
+    // resetting it back to "" (SD card root).
+    int n2 = player_config_apply("[player]\nrootdir = MSX\n");
+    CHK(n2 == 1);
+    CHK(!strcmp(player_config_root_dir(), "MSX"));
+    int n3 = player_config_apply("[player]\nfolder = /Genesis\n");
+    CHK(n3 == 1);
+    CHK(!strcmp(player_config_root_dir(), "Genesis"));
+    int n4 = player_config_apply("[player]\ndir = \n"); // empty value -> root_dir = "" (SD root)
+    CHK(n4 == 1);
+    CHK(*player_config_root_dir() == '\0');
 
     printf("applied=%d\n", n);
     printf(fail ? "FAILED\n" : "ok\n");

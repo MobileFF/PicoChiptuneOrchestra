@@ -1,7 +1,8 @@
 // VGM multi-MCU player -- master firmware (Raspberry Pi Pico).
 //
-// Mounts the SD card, plays every .vgm/.vgz file in the root directory --
-// or, if vgmplay.ini's [player] recursive = yes, every subdirectory too,
+// Mounts the SD card, plays every .vgm/.vgz file in the root directory (or,
+// if vgmplay.ini's [player] root_dir is set, that folder instead) -- or, if
+// [player] recursive = yes, every subdirectory under the start point too,
 // one folder at a time (see visit_dir()) -- in case-insensitive sorted order
 // (looping forever) or, if [player] shuffle = yes, a freshly-randomised
 // order per folder each pass, dispatching register writes to the slave
@@ -159,9 +160,10 @@ static bool play_one(const char *dir_path, const char *fname); // fwd decl
 // Scans `s_dir_path[depth]` once, playing every .vgm/.vgz it finds there
 // (sorted or shuffled exactly like the non-recursive root-only path always
 // did), then -- only when [player] recursive is on -- recurses into every
-// subdirectory found in that same scan. depth 0 is always visited (the SD
-// card root); depth 0's caller is responsible for its own "nothing played
-// this whole pass" messaging, using s_played_this_pass.
+// subdirectory found in that same scan. depth 0 is always visited first (the
+// SD card root, or [player] root_dir if set -- main() fills in s_dir_path[0]
+// before calling this); depth 0's caller is responsible for its own "nothing
+// played this whole pass" messaging, using s_played_this_pass.
 static void visit_dir(int depth) {
     const char *dir_path = s_dir_path[depth];
     bool recursive = player_config_recursive_enabled();
@@ -357,21 +359,32 @@ int main(void) {
     }
     printf("slave settle window done\n");
 
-    // Each pass: walk the SD card root (and, if [player] recursive = yes,
-    // every subdirectory under it too -- see visit_dir()) and play whatever
-    // is found. Re-scanning from scratch every pass (rather than caching the
-    // list) means a card swapped/edited between passes is picked up without
-    // a reboot, same as it always was for the root-only case.
+    // Each pass: walk the SD card root, or [player] root_dir if set (and, if
+    // [player] recursive = yes, every subdirectory under the start point too
+    // -- see visit_dir()) and play whatever is found. Re-scanning from
+    // scratch every pass (rather than caching the list) means a card
+    // swapped/edited between passes is picked up without a reboot, same as
+    // it always was for the root-only case.
     for (;;) {
         s_played_this_pass = 0;
         s_found_this_pass = 0;
-        snprintf(s_dir_path[0], DIR_PATH_BUF_SZ, "0:");
+        const char *root_dir = player_config_root_dir();
+        if (root_dir[0]) {
+            snprintf(s_dir_path[0], DIR_PATH_BUF_SZ, "0:/%s", root_dir);
+        } else {
+            snprintf(s_dir_path[0], DIR_PATH_BUF_SZ, "0:");
+        }
         visit_dir(0);
 
         if (s_found_this_pass == 0) {
-            printf("%s", player_config_recursive_enabled()
-                       ? "no .vgm/.vgz files found on the SD card (root or any subfolder), retrying...\n"
-                       : "no .vgm/.vgz files found on the SD card root, retrying...\n");
+            if (root_dir[0]) {
+                printf("no .vgm/.vgz files found under \"%s\"%s, retrying...\n", root_dir,
+                       player_config_recursive_enabled() ? " (or any subfolder of it)" : "");
+            } else {
+                printf("%s", player_config_recursive_enabled()
+                           ? "no .vgm/.vgz files found on the SD card (root or any subfolder), retrying...\n"
+                           : "no .vgm/.vgz files found on the SD card root, retrying...\n");
+            }
             oled_ui_set_status("No .vgm files on card");
             sleep_ms(1000); // avoid a tight spin on an empty card
         } else if (s_played_this_pass == 0) {

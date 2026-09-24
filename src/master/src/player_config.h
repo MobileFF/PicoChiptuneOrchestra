@@ -49,6 +49,17 @@
 //                        ; turn before moving to the next folder. shuffle/
 //                        ; sort order still applies PER FOLDER, not globally
 //                        ; across the whole card.
+//   root_dir = <path>    ; optional: scan starts inside this SD-card-relative
+//                        ; folder instead of the SD card root, e.g.
+//                        ; "GAMES/Sega" (a leading/trailing slash or a "0:"
+//                        ; drive prefix, if given, is stripped). Independent
+//                        ; of `recursive` above: root_dir alone plays only
+//                        ; that folder's own files (root_dir's subfolders are
+//                        ; still ignored, same as the SD-root case); combine
+//                        ; with `recursive = yes` to walk everything under
+//                        ; root_dir instead of the whole card. Default ""
+//                        ; (the SD card root). A missing/misspelled folder
+//                        ; just plays nothing (logged), not a fatal error.
 #pragma once
 
 #include <stddef.h>
@@ -76,6 +87,13 @@ uint32_t player_config_preview_seconds(void);
 
 // [player] recursive = yes|no, default false. Read by main.c's playlist loop.
 bool player_config_recursive_enabled(void);
+
+// [player] root_dir = <path>, default "" (SD card root). Returns a pointer to
+// a static buffer holding the normalised, SD-card-relative folder to start
+// scanning from -- no leading/trailing slash, no "0:" drive prefix; "" means
+// the SD card root (the original default behaviour). Read by main.c before
+// its first scan pass.
+const char *player_config_root_dir(void);
 
 // Read `path` from the mounted filesystem and hand it to
 // player_config_apply(). Call after f_mount, before slave_bus_init().

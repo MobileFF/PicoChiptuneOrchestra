@@ -165,8 +165,21 @@
   スタック使用量が比例して増えないようにした。基本動作は実機で確認済み。
   `tools/config_gui/vgmplay_config_gui.py`のGUI/CLIにも`recursive`キーを追加
   (`tools/config_gui/test_vgmplay_config_gui.py`にテスト追加)。
-
-## [0.1.0] - 2026-09-04
+- **スキャン開始フォルダを指定する`[player] root_dir`**: 既定は""(SDカードルート)。
+  `root_dir = GAMES/Sega`のようにSDカード相対パスを指定すると、そのフォルダを起点に
+  走査するようになる(先頭/末尾の`/`や`0:`ドライブプレフィックスは自動除去)。
+  `recursive`とは独立したキーで、`root_dir`単体ではそのフォルダ直下のファイルのみ、
+  `recursive = yes`と組み合わせるとそのフォルダ以下を再帰的に再生する(=カード全体
+  ではなく指定フォルダの中だけを再帰走査、という当初の要望どおりの動作)。
+  存在しない/誤字のフォルダはエラーにせず「見つからない」扱いで再スキャンを続ける。
+  `tools/host_tests/test_player_config.c`にキー解析・エイリアス(`rootdir`/`folder`/
+  `dir`)・正規化のテストを追加。未実機確認。
+  `tools/config_gui/vgmplay_config_gui.py`のGUI/CLIにも同じ正規化ロジックと
+  `root_dir`入力欄を追加(`tools/config_gui/test_vgmplay_config_gui.py`にテスト追加、
+  長さ超過のバリデーションも実装側の`ROOT_DIR_BUF_SZ`と一致させた)。GUIには
+  さらに**Browse...**ボタンを追加し、フォルダ選択ダイアログで選んだ絶対パスを
+  (開いている、または保存先の)`vgmplay.ini`のあるフォルダを基準に自動で
+  相対パス化する(SDカード外を選んだ場合はエラー表示)。
 
 **PicoChiptuneOrchestra** として初めて公開したスナップショットです(旧作業名
 「VGMPlay 分散マルチMCU」から改称。[vgmrips/vgmplay](https://github.com/vgmrips/vgmplay)本家とは

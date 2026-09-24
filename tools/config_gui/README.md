@@ -4,8 +4,9 @@ A small tkinter desktop app for editing the SD-card config file
 ([`firmware/vgmplay.ini`](../../firmware/vgmplay.ini) / the copy on your SD
 card). Per sound chip: enable/disable, chip-select GPIO, and an optional
 per-byte CS-pulse gap. Plus general playback settings: shuffle, the skip
-button's GPIO, preview mode (cut every song short after N seconds), and
-recursive mode (walk every subfolder instead of just the SD card root). See
+button's GPIO, preview mode (cut every song short after N seconds), recursive
+mode (walk every subfolder instead of just the start folder), and the
+SD-card-relative folder to start scanning from. See
 [docs/circuit.md 1.2](../../docs/circuit.md).
 
 ## Run
@@ -34,10 +35,17 @@ In the window: tick **Enabled**, set **CS GPIO** (0–28) and optionally
 board whose built-in button is wired elsewhere, e.g. a "USR" button on
 GPIO24), **Preview mode** and **Preview seconds** (blank = firmware default
 30; cuts every song short and advances, as if the skip button had been
-pressed — for auditioning a whole card quickly), and **Recursive** (walks
-every subfolder on the card, playing each folder's files in turn, instead of
-just the root — shuffle still applies per folder, not globally). **Validate**
-and every save flag:
+pressed — for auditioning a whole card quickly), **Recursive** (walks every
+subfolder under the start folder, playing each one's files in turn — shuffle
+still applies per folder, not globally), and **Start folder** (blank = SD
+card root; a card-relative path like `GAMES/Sega` to scan from there instead
+— a leading/trailing slash or a `0:` drive prefix, if typed, is stripped
+automatically; combine with Recursive to walk everything under just that one
+folder). Its **Browse…** button opens a folder picker rooted at the SD card
+and fills in the path relative to it automatically — it needs to know where
+the SD card is first, so open this vgmplay.ini from the card (or Save/Save
+As onto it) before using Browse; picking a folder outside the card is
+rejected with an error. **Validate** and every save flag:
 
 - CS GPIO out of range (error)
 - CS on a pin the master already uses — 0/1 OLED, the skip button's GPIO
@@ -45,6 +53,7 @@ and every save flag:
   (warning)
 - two enabled chips sharing a CS GPIO (warning)
 - skip_button/preview_seconds out of range (error)
+- start folder longer than the firmware's buffer (error)
 
 The parser matches the firmware (`src/master/src/player_config.c`): section names
 ignore case, `-`, `_` and spaces (`[AY-3-8910]` == `[ay8910]`), the same key

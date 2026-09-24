@@ -5,8 +5,8 @@ Per sound chip: enable/disable, chip-select GPIO, an optional per-byte
 CS-pulse gap (microseconds), and an optional output volume (percent of
 unity, 0-255). Plus general (non-chip) settings: shuffle playback order,
 the skip button's GPIO, preview mode (cut every song short after N
-seconds), and recursive mode (walk every subfolder instead of just the SD
-card root). Mirrors the firmware parser in master/src/player_config.c -- section names
+seconds), recursive mode (walk every subfolder instead of just the SD card
+root), and the SD-card-relative folder to start scanning from. Mirrors the firmware parser in master/src/player_config.c -- section names
 ignore case / '-' / '_' / space, the same key aliases are accepted, and the
 same reserved-pin / duplicate-CS checks are surfaced as warnings.
 
@@ -39,7 +39,7 @@ DEFAULT_GAP = {c[0]: c[3] for c in CHIPS}
 
 # Sentinel `cur` value for the one non-chip section, [player] (general
 # playback settings: shuffle, skip_button, preview/preview_seconds,
-# recursive). Mirrors master/src/player_config.c's SECTION_PLAYER.
+# recursive, root_dir). Mirrors master/src/player_config.c's SECTION_PLAYER.
 PLAYER_SECTION = "player"
 
 # normalized section name -> canonical
@@ -79,6 +79,16 @@ RESERVED_PINS = {
 CS_MIN, CS_MAX = 0, 28
 DEFAULT_SKIP_BUTTON_GPIO = 2       # master/src/main.c's PIN_BTN_SKIP
 DEFAULT_PREVIEW_SECONDS = 30       # master/src/player_config.c's s_preview_seconds
+ROOT_DIR_BUF_SZ = 128              # master/src/player_config.c's ROOT_DIR_BUF_SZ (incl. NUL)
+
+
+def normalize_root_dir(v):
+    """Strip an optional FatFs-style "0:" drive prefix and leading/trailing
+    slashes, exactly like player_config.c's root_dir parsing, so "0:/GAMES/
+    Sega/", "/GAMES/Sega" and "GAMES/Sega" all end up the same."""
+    if v[:2].lower() == "0:":
+        v = v[2:]
+    return v.strip("/")
 
 INI_HEADER = """\
 ; vgmplay.ini -- VGM multi-MCU player (master) configuration
@@ -109,7 +119,8 @@ def parse_ini(text):
 
     settings: {canonical_chip: {"enabled": bool?, "cs": int?, "gap": int?,
     "volume": int?}, PLAYER_SECTION: {"shuffle": bool?, "skip_button": int?,
-    "preview": bool?, "preview_seconds": int?, "recursive": bool?}}
+    "preview": bool?, "preview_seconds": int?, "recursive": bool?,
+    "root_dir": str?}}
     notes:    list of human-readable strings about anything odd in the file.
     """
     settings = {}
@@ -172,6 +183,8 @@ def parse_ini(text):
                     notes.append(f"line {lineno}: bad boolean '{val}' for recursive")
                 else:
                     settings.setdefault(PLAYER_SECTION, {})["recursive"] = b
+            elif nk in ("rootdir", "folder", "dir"):
+                settings.setdefault(PLAYER_SECTION, {})["root_dir"] = normalize_root_dir(val)
             else:
                 notes.append(f"line {lineno}: unknown key '{rawkey.strip()}' in [player], ignored")
             continue
@@ -199,8 +212,8 @@ def rows_from_settings(settings):
 
     Includes CHIP_ORDER's per-chip rows plus one PLAYER_SECTION entry
     ({"shuffle": bool, "skip_button": int?, "preview": bool,
-    "preview_seconds": int?, "recursive": bool}) for the non-chip [player]
-    section.
+    "preview_seconds": int?, "recursive": bool, "root_dir": str}) for the
+    non-chip [player] section.
     """
     rows = {}
     for chip in CHIP_ORDER:
@@ -218,6 +231,7 @@ def rows_from_settings(settings):
         "preview": p.get("preview", False),
         "preview_seconds": p.get("preview_seconds", None),  # None -> firmware default 30, no line written
         "recursive": p.get("recursive", False),
+        "root_dir": p.get("root_dir", ""),  # "" -> SD card root, no line written
     }
     return rows
 
@@ -226,7 +240,7 @@ def default_rows():
     rows = {chip: {"enabled": True, "cs": DEFAULT_CS[chip], "gap": None, "volume": None}
             for chip in CHIP_ORDER}
     rows[PLAYER_SECTION] = {"shuffle": False, "skip_button": None, "preview": False,
-                             "preview_seconds": None, "recursive": False}
+                             "preview_seconds": None, "recursive": False, "root_dir": ""}
     return rows
 
 
@@ -240,6 +254,8 @@ def generate_ini(rows):
     if rows[PLAYER_SECTION]["preview_seconds"] is not None:
         out.append(f"preview_seconds = {int(rows[PLAYER_SECTION]['preview_seconds'])}")
     out.append(f"recursive = {'yes' if rows[PLAYER_SECTION]['recursive'] else 'no'}")
+    if rows[PLAYER_SECTION]["root_dir"]:
+        out.append(f"root_dir = {rows[PLAYER_SECTION]['root_dir']}")
     out.append("")
     for chip in CHIP_ORDER:
         r = rows[chip]
@@ -283,6 +299,11 @@ def validate(rows):
                 errors.append(f"preview_seconds {ps} must be > 0")
         except (TypeError, ValueError):
             errors.append(f"preview_seconds '{rows[PLAYER_SECTION]['preview_seconds']}' is not a number")
+
+    # Mirrors player_config.c's own length guard (a longer value is rejected
+    # there, not truncated) -- ROOT_DIR_BUF_SZ counts the terminating NUL too.
+    if len(rows[PLAYER_SECTION]["root_dir"]) >= ROOT_DIR_BUF_SZ:
+        errors.append(f"root_dir is too long (max {ROOT_DIR_BUF_SZ - 1} characters)")
 
     for chip in CHIP_ORDER:
         r = rows[chip]
@@ -350,8 +371,10 @@ def run_check(path):
     p = rows[PLAYER_SECTION]
     skip_disp = "default(2)" if p["skip_button"] is None else p["skip_button"]
     prevsec_disp = "default(30)" if p["preview_seconds"] is None else p["preview_seconds"]
+    root_disp = "(SD card root)" if not p["root_dir"] else p["root_dir"]
     print(f"  [player]   shuffle={p['shuffle']} skip_button={skip_disp} "
-          f"preview={p['preview']} preview_seconds={prevsec_disp} recursive={p['recursive']}")
+          f"preview={p['preview']} preview_seconds={prevsec_disp} recursive={p['recursive']} "
+          f"root_dir={root_disp}")
     for chip in CHIP_ORDER:
         r = rows[chip]
         gap = "default" if r["gap"] is None else r["gap"]
@@ -382,13 +405,21 @@ def run_gui(initial_path=None):
     root.title("vgmplay.ini editor")
     root.minsize(640, 460)
 
-    state = {"path": None}
+    # sd_root_hint is the folder the Start-folder Browse... dialog treats as
+    # the SD card root, so it can turn an absolute pick into the
+    # card-relative path root_dir needs. It tracks wherever vgmplay.ini
+    # itself lives -- known once a file has been opened or saved, or (even
+    # before that) if the tool was pointed at the SD card / its ini path on
+    # the command line.
+    state = {"path": None,
+             "sd_root_hint": os.path.dirname(os.path.abspath(initial_path)) if initial_path else None}
     vars_ = {}  # chip -> {"enabled": BooleanVar, "cs": StringVar, "gap": StringVar, "volume": StringVar}
     shuffle_var = tk.BooleanVar(value=False)     # [player] shuffle
     skip_button_var = tk.StringVar(value="")     # [player] skip_button (blank = default 2)
     preview_var = tk.BooleanVar(value=False)     # [player] preview
     preview_seconds_var = tk.StringVar(value="") # [player] preview_seconds (blank = default 30)
     recursive_var = tk.BooleanVar(value=False)   # [player] recursive
+    root_dir_var = tk.StringVar(value="")        # [player] root_dir (blank = SD card root)
 
     # ---- widgets ----
     pathvar = tk.StringVar(value="(new file - not saved yet)")
@@ -415,8 +446,20 @@ def run_gui(initial_path=None):
 
     row3 = ttk.Frame(playerf)
     row3.pack(fill="x", pady=(4, 0))
-    ttk.Checkbutton(row3, text="Recursive (walk every subfolder, not just the SD card root)",
+    ttk.Checkbutton(row3, text="Recursive (walk every subfolder, not just the start folder)",
                     variable=recursive_var).pack(side="left")
+
+    row4 = ttk.Frame(playerf)
+    row4.pack(fill="x", pady=(4, 0))
+    ttk.Label(row4, text="Start folder (SD-relative):").pack(side="left")
+    ttk.Entry(row4, width=30, textvariable=root_dir_var).pack(side="left", padx=(4, 4))
+    ttk.Button(row4, text="Browse...", command=lambda: do_browse_root_dir()).pack(side="left")
+
+    row4b = ttk.Frame(playerf)
+    row4b.pack(fill="x")
+    ttk.Label(row4b, text="(blank = SD card root; combine with Recursive to walk just this "
+                          "folder; Browse needs the SD card's vgmplay.ini opened or saved first)",
+              foreground="#777").pack(side="left")
 
     grid = ttk.Frame(root, padding=8)
     grid.pack(fill="x")
@@ -480,6 +523,7 @@ def run_gui(initial_path=None):
             "preview": bool(preview_var.get()),
             "preview_seconds": (int(prevsec) if re.fullmatch(r"\d+", prevsec) else (None if prevsec == "" else prevsec)),
             "recursive": bool(recursive_var.get()),
+            "root_dir": normalize_root_dir(root_dir_var.get().strip()),
         }
         return rows
 
@@ -497,6 +541,7 @@ def run_gui(initial_path=None):
         preview_var.set(bool(p["preview"]))
         preview_seconds_var.set("" if p["preview_seconds"] is None else str(p["preview_seconds"]))
         recursive_var.set(bool(p["recursive"]))
+        root_dir_var.set(p["root_dir"])
 
     def do_validate(show_ok=True):
         rows = rows_from_form()
@@ -531,6 +576,7 @@ def run_gui(initial_path=None):
         settings, notes = parse_ini(text)
         form_from_rows(rows_from_settings(settings))
         state["path"] = path
+        state["sd_root_hint"] = os.path.dirname(os.path.abspath(path))
         pathvar.set(path)
         head = [f"Loaded {os.path.basename(path)}."]
         if notes:
@@ -553,6 +599,7 @@ def run_gui(initial_path=None):
             messagebox.showerror("Save failed", str(e))
             return False
         state["path"] = path
+        state["sd_root_hint"] = os.path.dirname(os.path.abspath(path))
         pathvar.set(path)
         cur = log.get("1.0", "end").strip()
         say(f"Saved {path}", *(("", cur) if cur else ()))
@@ -576,6 +623,31 @@ def run_gui(initial_path=None):
         if messagebox.askyesno("Reset", "Reset every chip to the firmware defaults?"):
             form_from_rows(default_rows())
             say("Reset to firmware defaults (not saved yet).")
+
+    def do_browse_root_dir():
+        sd_root = state["sd_root_hint"]
+        if not sd_root:
+            messagebox.showinfo(
+                "SD card root unknown",
+                "Open this vgmplay.ini from the SD card (or Save/Save As onto "
+                "it) first, so Browse knows where the SD card root is.")
+            return
+        chosen = filedialog.askdirectory(
+            title="Select start folder (must be inside the SD card)",
+            initialdir=sd_root, mustexist=True)
+        if not chosen:
+            return
+        rel = os.path.relpath(os.path.abspath(chosen), sd_root)
+        if rel == os.curdir:
+            root_dir_var.set("")
+            return
+        if rel.split(os.sep)[0] == os.pardir:
+            messagebox.showerror(
+                "Outside the SD card",
+                f'"{chosen}" is not inside the SD card root\n({sd_root}).\n'
+                "Pick a folder under the SD card instead.")
+            return
+        root_dir_var.set(normalize_root_dir(rel.replace(os.sep, "/")))
 
     ttk.Button(btns, text="Validate", command=lambda: do_validate()).pack(side="left")
     ttk.Button(btns, text="Reset to defaults", command=do_reset).pack(side="left", padx=(6, 0))

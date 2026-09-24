@@ -97,9 +97,10 @@ enabled = no          ; 無効にするとその VGM コマンドは無視され
   警告ログを出します(動作は続行)。範囲外(29以上)の値は無視。
 - 書き換えたら SD を挿し直して電源再投入。
 - チップごとの設定とは別に、`[player]`セクションで曲送りボタンのGPIO変更(`skip_button`)、
-  試聴モード(`preview`/`preview_seconds`)、SDカード内フォルダの再帰走査(`recursive`)も
-  設定できます。詳細は`src/master/src/player_config.h`のコメント、またはひな形
-  `firmware/vgmplay.ini`のコメントを参照してください。
+  試聴モード(`preview`/`preview_seconds`)、SDカード内フォルダの再帰走査(`recursive`)、
+  スキャン開始フォルダの変更(`root_dir`。`recursive = yes`と組み合わせると「指定フォルダの
+  中だけを再帰的に再生」できる)も設定できます。詳細は`src/master/src/player_config.h`の
+  コメント、またはひな形`firmware/vgmplay.ini`のコメントを参照してください。
 - テキストエディタで直接書けますが、GUI エディタもあります:
   `python3 tools/config_gui/vgmplay_config_gui.py`(Python 標準ライブラリのみ、
   [tools/config_gui/README.md](../tools/config_gui/README.md))。
