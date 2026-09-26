@@ -182,6 +182,23 @@ def test_aliases_and_normalisation():
     assert r["segapcm"]["enabled"] is False
 
 
+def test_sn76489_dual_chip_section_aliases():
+    # [sn76489_2]: a second physical SN76489 for VGM's "Dual Chip Support"
+    # (command 0x30 dd) -- see docs/circuit.md 1.3. Same keys, same alias/
+    # normalisation rules as every other chip section.
+    for hdr in ("[sn76489_2]", "[SN76489-2]", "[ sn76489 2 ]"):
+        s, notes = g.parse_ini(f"{hdr}\nenabled = yes\ncs = 4\n")
+        assert notes == [], (hdr, notes)
+        r = g.rows_from_settings(s)["sn76489_2"]
+        assert r["enabled"] is True and r["cs"] == 4
+
+    rows = g.default_rows()
+    assert rows["sn76489_2"] == {"enabled": True, "cs": 27, "gap": None, "volume": None}
+    s2, notes2 = g.parse_ini(g.generate_ini(rows))
+    assert notes2 == []
+    assert g.rows_from_settings(s2) == rows
+
+
 def test_notes_on_bad_input():
     _, notes = g.parse_ini(
         "cs = 5\n"                 # before any section

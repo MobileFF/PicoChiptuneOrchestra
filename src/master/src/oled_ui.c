@@ -102,6 +102,7 @@ static const char *CHIP_LABEL[VGM_CHIP_COUNT] = {
     [VGM_CHIP_YM2203]  = "YM2203",
     [VGM_CHIP_SCC]      = "SCC",
     [VGM_CHIP_SEGAPCM] = "SegaPCM",
+    [VGM_CHIP_SN76489_2] = "SN76489#2",
 };
 
 // Split `s` across two page rows of SSD1306_COLS_PER_LINE (21) chars. The

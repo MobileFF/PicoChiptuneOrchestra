@@ -3,6 +3,16 @@
 #include "ff.h"
 #include "miniz_tinfl.h"
 
+bool vgz_looks_like_gzip(const char *path) {
+    FIL f;
+    if (f_open(&f, path, FA_READ) != FR_OK) return false;
+    uint8_t hdr[2];
+    UINT br = 0;
+    FRESULT fr = f_read(&f, hdr, sizeof(hdr), &br);
+    f_close(&f);
+    return fr == FR_OK && br == sizeof(hdr) && hdr[0] == 0x1F && hdr[1] == 0x8B;
+}
+
 static bool skip_cstring(FIL *f) {
     UINT br;
     uint8_t c;

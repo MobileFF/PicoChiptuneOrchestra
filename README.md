@@ -15,7 +15,10 @@ YM2203 / YM2413 の4チップはRP2040標準クロックだと実機検証でリ
 
 対応チップ: **SN76489** / **AY-3-8910** / **YM2612**\* / **YM2413**\* / **YM2151**\* / **YM2203**\* /
 **K051649 (SCC)** / **Sega PCM**(サンプルROMは~192KBまで、詳細は[docs/design-notes.md](docs/design-notes.md)参照)。
-\* Pico 2 (RP2350) 必須(RP2040では音程/テンポが乱れる)。
+\* Pico 2 (RP2350) 必須(RP2040では音程/テンポが乱れる)。SN76489はVGM仕様の
+["Dual Chip Support"](https://vgmrips.net/wiki/VGM_Specification#Dual_Chip_Support)
+(コマンド`0x30 dd`)に対応しており、同じ`slave_sn76489.uf2`をもう1枚書き込むだけで2台構成に
+できます(詳細は[docs/circuit.md 1.3](docs/circuit.md))。
 
 - 回路・配線・BOM: [docs/circuit.md](docs/circuit.md)
 - ソフトウェア設計・プロトコル・既知の制約: [docs/design-notes.md](docs/design-notes.md)

@@ -13,6 +13,7 @@ static const char *chip_name(vgm_chip_id_t c) {
         case VGM_CHIP_YM2203: return "YM2203";
         case VGM_CHIP_SCC: return "SCC";
         case VGM_CHIP_SEGAPCM: return "SEGAPCM";
+        case VGM_CHIP_SN76489_2: return "SN76489#2";
         default: return "?";
     }
 }

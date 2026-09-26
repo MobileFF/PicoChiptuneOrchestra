@@ -25,6 +25,7 @@ const char *vgm_chip_name(vgm_chip_id_t chip) {
         case VGM_CHIP_YM2203:  return "YM2203";
         case VGM_CHIP_SCC:     return "SCC";
         case VGM_CHIP_SEGAPCM: return "SegaPCM";
+        case VGM_CHIP_SN76489_2: return "SN76489#2";
         default:               return "?";
     }
 }

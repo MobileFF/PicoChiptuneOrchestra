@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """GUI editor for the VGM multi-MCU player's SD-card config file (vgmplay.ini).
 
-Per sound chip: enable/disable, chip-select GPIO, an optional per-byte
-CS-pulse gap (microseconds), and an optional output volume (percent of
-unity, 0-255). Plus general (non-chip) settings: shuffle playback order,
+Per sound chip (including the optional second SN76489 for VGM's "Dual Chip
+Support", command 0x30 dd -- see docs/circuit.md 1.3): enable/disable,
+chip-select GPIO, an optional per-byte CS-pulse gap (microseconds), and an
+optional output volume (percent of unity, 0-255). Plus general (non-chip)
+settings: shuffle playback order,
 the skip button's GPIO, preview mode (cut every song short after N
 seconds), recursive mode (walk every subfolder instead of just the SD card
 root), and the SD-card-relative folder to start scanning from. Mirrors the firmware parser in master/src/player_config.c -- section names
@@ -31,6 +33,7 @@ CHIPS = [
     ("ym2203",  "YM2203",    21, None),
     ("scc",     "SCC",       22, None),
     ("segapcm", "SegaPCM",   26, None),
+    ("sn76489_2", "SN76489 #2", 27, None),  # VGM "Dual Chip Support" (0x30 dd), see docs/circuit.md 1.3
 ]
 CHIP_ORDER = [c[0] for c in CHIPS]
 DISPLAY = {c[0]: c[1] for c in CHIPS}
@@ -52,6 +55,7 @@ SECTION_ALIASES = {
     "ym2203": "ym2203",
     "scc": "scc", "k051649": "scc",
     "segapcm": "segapcm",
+    "sn764892": "sn76489_2",  # "[sn76489_2]" / "[sn76489-2]" / "[sn76489 2]"
 }
 
 # normalized key (lower, '-'/'_'/space removed) -> field

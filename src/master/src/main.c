@@ -239,16 +239,23 @@ static bool play_one(const char *dir_path, const char *fname) {
     char full_path[DIR_PATH_BUF_SZ + 256];
     snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, fname);
 
+    if (!has_extension(fname, ".vgm") && !has_extension(fname, ".vgz")) return false;
+
+    // Whether to decompress is decided by the file's actual CONTENT (gzip
+    // magic), not its extension -- some real-world VGM packs ship
+    // gzip-compressed data under a plain ".vgm" name (found via
+    // 調査用/Ashura-SMS/*.vgm: valid single-SN76489 songs once decompressed,
+    // but silently rejected as "not a valid VGM file" when read raw because
+    // the extension said not to bother). A ".vgz" that turns out to NOT be
+    // gzip is handled the same way, symmetrically: read as-is.
     const char *play_path = full_path;
-    if (has_extension(fname, ".vgz")) {
+    if (vgz_looks_like_gzip(full_path)) {
         printf("decompressing %s ...\n", fname);
         if (!vgz_inflate_file(full_path, TEMP_VGM_PATH)) {
             printf("  ERROR: gzip decompression failed, skipping this file\n");
             return false;
         }
         play_path = TEMP_VGM_PATH;
-    } else if (!has_extension(fname, ".vgm")) {
-        return false;
     }
 
     // Skip a song that needs a chip this build doesn't have a slave wired up

@@ -1,7 +1,8 @@
 # 回路構成
 
-master (Raspberry Pi Pico) 1台 + slave (RP2040-Zero) 最大8台 + アナログミキサーの実体配線図。
-[VGM_multi_MCU_design.md](../VGM_multi_MCU_design.md) の構成方針をそのまま実装したもの。
+master (Raspberry Pi Pico) 1台 + slave (RP2040-Zero) 最大8台(+ 任意でSN76489の2台目)+
+アナログミキサーの実体配線図。[VGM_multi_MCU_design.md](../VGM_multi_MCU_design.md) の構成方針を
+そのまま実装したもの。
 
 ## 1. マスター (Raspberry Pi Pico) ピン割り当て
 
@@ -21,6 +22,7 @@ master (Raspberry Pi Pico) 1台 + slave (RP2040-Zero) 最大8台 + アナログ�
 | スレーブ#5 CS (YM2203) | GPIO21 | 〃 |
 | スレーブ#6 CS (SCC) | GPIO22 | 〃 |
 | スレーブ#7 CS (Sega PCM) | GPIO26 | 〃 |
+| スレーブ#8 CS (SN76489 2台目、任意) | GPIO27 | 〃。VGM仕様の"Dual Chip Support"(コマンド`0x30 dd`)対応。`slave_sn76489.uf2`をもう1枚書き込むだけで、新規ファームウェアは不要(4章参照) |
 | スキップボタン | GPIO2 (既定) | GNDへ、内部プルアップ使用。`vgmplay.ini`の`[player] skip_button`で変更可(例: クローン基板の「USR」ボタンがGPIO24にある場合) |
 | OLED SDA | GPIO0 | I2C0 SDA (SSD1306ステータス表示、任意) |
 | OLED SCL | GPIO1 | I2C0 SCL (同上) |
@@ -104,6 +106,23 @@ enabled = no          ; 無効にするとその VGM コマンドは無視され
 - テキストエディタで直接書けますが、GUI エディタもあります:
   `python3 tools/config_gui/vgmplay_config_gui.py`(Python 標準ライブラリのみ、
   [tools/config_gui/README.md](../tools/config_gui/README.md))。
+
+### 1.3 SN76489の2台目 (Dual Chip Support、任意)
+
+VGM仕様の["Dual Chip Support"](https://vgmrips.net/wiki/VGM_Specification#Dual_Chip_Support)に
+対応しています。同じ曲の中で2個のSN76489を鳴らすVGMファイルは、1台目宛のコマンド`0x50 dd`とは
+別に、2台目宛のコマンド`0x30 dd`(データ形式は`0x50`と同じ)を使います。
+
+- **ハードウェアは1台目と全く同じ**です。もう1枚RP2040-Zeroを用意し、`slave_sn76489.uf2`を
+  書き込んで(新規ビルド不要、1台目と同じイメージ)、CSだけマスターのGPIO27に配線してください
+  (1台目はGPIO12)。SPI RX/SCK/PWM出力の配線は1台目と同じパターンです(2章参照)。
+- ソフト側は`vgmplay.ini`に`[sn76489_2]`セクション(既定: `enabled = yes`, `cs = 27`)を追加すれば
+  有効になります。2台目を組んでいない場合、この既定のままでも実害はありません(GPIO27に
+  何も繋がっていないだけで、他のチップと同様に静かに無視されます)。組んだ場合のCSピン変更は
+  他のチップと同じ`enabled`/`cs`/`gap`/`volume`キーで行えます。
+- クロックはVGMヘッダのSN76489用フィールド(1個のみ)を2台とも共有するので、個別設定はありません。
+- 曲がDual Chip Supportを宣言しているか(ヘッダのSN76489クロックのbit30)は自動判定され、
+  OLEDの使用チップ表示にも「SN76489#2」として出ます。
 
 ## 2. スレーブ (RP2040-Zero) ピン割り当て
 
@@ -294,7 +313,8 @@ Rが大きい組み合わせほど目立ちます。
 
 対応チップは8種類 (SN76489 / YM2612 / AY-3-8910 / YM2413 / YM2151 / YM2203 / SCC / Sega PCM) ですが、
 実際に組むスレーブ数 N は再生したいVGMファイルが使うチップの分だけで構いません。以下はN=4の例です
-(N=8ならRP2040-Zero・RCフィルタ用部品・ミキサー入力抵抗をそれぞれ8に読み替え)。
+(N=8ならRP2040-Zero・RCフィルタ用部品・ミキサー入力抵抗をそれぞれ8に読み替え)。SN76489の2台目
+(1.3章、Dual Chip Support)を組む場合はNにもう1を足してください(部品は他のスレーブと全く同じ)。
 
 | 部品 | 個数 (N=4の例) | 備考 |
 |---|---|---|

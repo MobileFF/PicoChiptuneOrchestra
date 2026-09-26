@@ -54,6 +54,7 @@ static int lookup_chip(const char *raw) {
         {"scc",     VGM_CHIP_SCC},
         {"k051649", VGM_CHIP_SCC},
         {"segapcm", VGM_CHIP_SEGAPCM},
+        {"sn764892", VGM_CHIP_SN76489_2}, // "[sn76489_2]" / "[sn76489-2]" / "[sn76489 2]"
     };
     for (size_t i = 0; i < sizeof(KEYS) / sizeof(KEYS[0]); i++)
         if (name_matches(raw, KEYS[i].key)) return KEYS[i].id;

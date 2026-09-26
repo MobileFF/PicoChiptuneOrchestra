@@ -15,10 +15,13 @@
 //                        ; needed even when every chip's own timing is correct.
 //
 // Section names: sn76489, ym2413, ym2612, ay8910 (a.k.a. ay-3-8910),
-// ym2151, ym2203, scc (a.k.a. k051649), segapcm. Dashes/underscores/spaces
-// and case are ignored. Lines starting with # or ; are comments. Unknown
-// sections/keys and a missing file are warnings, never fatal -- anything
-// not set keeps its built-in default (see slave_bus.c).
+// ym2151, ym2203, scc (a.k.a. k051649), segapcm, sn76489_2 (a.k.a.
+// sn76489-2 / "sn76489 2" -- a second physical SN76489 slave for VGM's
+// "Dual Chip Support", command 0x30 dd; see vgm_player.c and
+// docs/circuit.md). Dashes/underscores/spaces and case are ignored. Lines
+// starting with # or ; are comments. Unknown sections/keys and a missing
+// file are warnings, never fatal -- anything not set keeps its built-in
+// default (see slave_bus.c).
 //
 // One more section, not a chip -- general playback behaviour:
 //

@@ -2,12 +2,13 @@
 
 A small tkinter desktop app for editing the SD-card config file
 ([`firmware/vgmplay.ini`](../../firmware/vgmplay.ini) / the copy on your SD
-card). Per sound chip: enable/disable, chip-select GPIO, and an optional
-per-byte CS-pulse gap. Plus general playback settings: shuffle, the skip
-button's GPIO, preview mode (cut every song short after N seconds), recursive
-mode (walk every subfolder instead of just the start folder), and the
-SD-card-relative folder to start scanning from. See
-[docs/circuit.md 1.2](../../docs/circuit.md).
+card). Per sound chip -- including the optional second SN76489 for VGM's
+"Dual Chip Support" (see [docs/circuit.md 1.3](../../docs/circuit.md)) --
+enable/disable, chip-select GPIO, and an optional per-byte CS-pulse gap. Plus
+general playback settings: shuffle, the skip button's GPIO, preview mode (cut
+every song short after N seconds), recursive mode (walk every subfolder
+instead of just the start folder), and the SD-card-relative folder to start
+scanning from. See [docs/circuit.md 1.2](../../docs/circuit.md).
 
 ## Run
 

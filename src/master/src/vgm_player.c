@@ -290,9 +290,11 @@ static uint32_t rd_u32le(const uint8_t *p) {
 // (MD, no YM2203) light up YM2203 on the OLED: its first two YM2612 register
 // writes (0x52 0x28 0x00 0x52 ...) sit at 0x44, the YM2203-clock slot.
 // Returns 0 for an absent/out-of-header field, or one whose value is outside
-// any real chip's crystal range (masks off the dual-chip flag first, then
-// checks). This second guard is separate from the data_start one above: some
-// VGM converters pad the header out to a later spec version's length without
+// any real chip's crystal range (masks off bits 30/31 -- the VGM spec's
+// dual-chip flag (0x40000000) and T6W28-variant flag (0x80000000, only
+// meaningful combined with the dual-chip bit) -- first, then checks). This
+// second guard is separate from the data_start one above: some VGM
+// converters pad the header out to a later spec version's length without
 // zeroing every extended field they don't populate (seen with AY-3-8910 @
 // 0x74 and K051649/SCC @ 0x9C on real-world YM2413 rips), leaving leftover
 // garbage that data_start alone can't catch since it genuinely sits inside
@@ -303,9 +305,17 @@ static uint32_t rd_u32le(const uint8_t *p) {
 // missing chip -- reported as some YM2413 VGMs not playing at all).
 static uint32_t hdr_clock(const uint8_t *header, uint32_t data_start, uint32_t off) {
     if (data_start < off + 4) return 0;
-    uint32_t clock = rd_u32le(header + off) & 0x7FFFFFFFu;
+    uint32_t clock = rd_u32le(header + off) & 0x3FFFFFFFu;
     if (clock < 1000u || clock > 100000000u) return 0;
     return clock;
+}
+
+// Is the VGM spec's dual-chip flag (bit 30, 0x40000000) set on the clock
+// field at `off`? Same data_start guard as hdr_clock() (a field past the
+// real header is command-stream bytes, not a clock) -- see its comment.
+static bool hdr_dual_chip(const uint8_t *header, uint32_t data_start, uint32_t off) {
+    if (data_start < off + 4) return false;
+    return (rd_u32le(header + off) & 0x40000000u) != 0;
 }
 
 // Bitmask of the chips a song uses, read from its (already loaded,
@@ -318,7 +328,13 @@ static uint32_t header_chip_mask(const uint8_t *header) {
     uint32_t data_rel = rd_u32le(header + 0x34);
     uint32_t data_start = (version >= 0x150 && data_rel != 0) ? (0x34 + data_rel) : 0x40;
     uint32_t mask = 0;
-    if (hdr_clock(header, data_start, 0x0C)) mask |= 1u << VGM_CHIP_SN76489;
+    if (hdr_clock(header, data_start, 0x0C)) {
+        mask |= 1u << VGM_CHIP_SN76489;
+        // Dual SN76489 (VGM spec "Dual Chip Support"): bit 30 of this same
+        // clock field means the song's command stream also uses 0x30 dd for
+        // a second PSG -- see the main dispatch switch and slave_bus.c.
+        if (hdr_dual_chip(header, data_start, 0x0C)) mask |= 1u << VGM_CHIP_SN76489_2;
+    }
     if (hdr_clock(header, data_start, 0x10)) mask |= 1u << VGM_CHIP_YM2413;
     if (hdr_clock(header, data_start, 0x2C)) mask |= 1u << VGM_CHIP_YM2612;
     if (version >= 0x110 && hdr_clock(header, data_start, 0x30)) mask |= 1u << VGM_CHIP_YM2151;
@@ -624,6 +640,10 @@ bool vgm_player_play(const char *path, const vgm_player_opts_t *opts) {
     // and tempo uniformly for the whole song. See chip_ops_t.sample_rate_hz's
     // doc comment in slave_common/include/slave_engine.h.
     s_chip_preset[VGM_CHIP_SN76489] = vgm_pick_clock_preset(sn76489_clock, SN76489_CLOCK_PRESETS, 3);
+    // The VGM header has only ONE clock field for SN76489 (0x0C) -- a dual
+    // setup always runs both physical chips off it, so the second instance
+    // just mirrors the first's preset rather than needing its own field.
+    s_chip_preset[VGM_CHIP_SN76489_2] = s_chip_preset[VGM_CHIP_SN76489];
     s_chip_preset[VGM_CHIP_YM2413]  = vgm_pick_clock_preset(ym2413_clock, YM2413_CLOCK_PRESETS, 2);
     s_chip_preset[VGM_CHIP_YM2612]  = vgm_pick_clock_preset(ym2612_clock, YM2612_CLOCK_PRESETS, 2);
     s_chip_preset[VGM_CHIP_AY8910]  = vgm_pick_clock_preset(ay8910_clock, AY8910_CLOCK_PRESETS, 3);
@@ -720,6 +740,19 @@ bool vgm_player_play(const char *path, const vgm_player_opts_t *opts) {
                 printf("[VGM ] 0x50 dd=0x%02X\n", (uint8_t)dd);
 #endif
                 slave_bus_write(VGM_CHIP_SN76489, 0, 0, (uint8_t)dd);
+                break;
+            }
+            // Dual Chip Support (VGM spec): the second SN76489 gets its own
+            // command byte, 0x30 dd, instead of a register/data-byte flag --
+            // this chip's 0x50 dd has no register byte to set a flag bit in.
+            // Same wire format as 0x50, just routed to the second slave.
+            case 0x30: {
+                int dd = reader_byte(&rd);
+                if (dd < 0) { ok = false; break; }
+#if VGM_MASTER_VERBOSE_LOG
+                printf("[VGM ] 0x30 dd=0x%02X (2nd SN76489)\n", (uint8_t)dd);
+#endif
+                slave_bus_write(VGM_CHIP_SN76489_2, 0, 0, (uint8_t)dd);
                 break;
             }
             case 0x51: case 0x52: case 0x53: case 0x54: case 0x55: {

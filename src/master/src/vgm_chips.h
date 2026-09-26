@@ -16,6 +16,13 @@ typedef enum {
     VGM_CHIP_YM2203,
     VGM_CHIP_SCC,
     VGM_CHIP_SEGAPCM,
+    // Second SN76489 (VGM spec "Dual Chip Support": header 0x0C clock's bit
+    // 30 declares it, command 0x30 dd addresses it instead of 0x50 dd) --
+    // appended at the end, not next to VGM_CHIP_SN76489, so every existing
+    // chip keeps its numeric value (nothing in this codebase should depend
+    // on these being contiguous or ordered by datasheet grouping, but no
+    // reason to risk it).
+    VGM_CHIP_SN76489_2,
     VGM_CHIP_COUNT,
 } vgm_chip_id_t;
 

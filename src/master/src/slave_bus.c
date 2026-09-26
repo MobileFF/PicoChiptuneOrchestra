@@ -15,7 +15,7 @@
 // chip's VGM commands silently dropped instead of sent nowhere -- useful
 // for VGM files that use chips you haven't built a slave for yet.
 // See docs/circuit.md for the default CS pin layout (GPIO 12-15, 20-22,
-// 26 on SPI1).
+// 26-27 on SPI1).
 //
 // `gap_us` is the per-byte CS-pulse gap for send_frame() below (see its
 // comment for why this exists at all). It's tunable PER SLAVE because the
@@ -71,8 +71,18 @@ static struct {
     // song. Fixed in vgm_player.c's handle_data_block() (type 0x80) by
     // re-sending the upload seek every 256 bytes, mirroring the YM2612 PCM
     // bank upload's already-proven every-128-bytes re-anchor (see its
-    // comment in vgm_player.c). NOT YET hardware-confirmed for Space
-    // Harrier.
+    // comment in vgm_player.c). Hardware-confirmed fixed for Space Harrier
+    // (2026-09-19).
+    // Second SN76489 (VGM spec "Dual Chip Support", command 0x30 dd -- see
+    // vgm_player.c). GPIO27 is the next free exposed pin after the 8
+    // original chips' 12-15/20-22/26 (see docs/circuit.md); it's its own
+    // physical slave board running the SAME slave_sn76489.uf2 firmware as
+    // chip #1, just wired to a different master CS pin -- no separate
+    // firmware build needed. present defaults to true like every other
+    // chip; leave it wired to an unused GPIO and it's a harmless no-op for
+    // the (common) single-PSG case, same as any other chip you haven't
+    // built a slave for.
+    [VGM_CHIP_SN76489_2] = {.present = true, .cs_gpio = 27, .gap_us = GAP_US_DEFAULT, .volume_pct = 100},
 };
 // ---------------------------------------------------------------------
 
@@ -86,6 +96,7 @@ static const char *chip_label(vgm_chip_id_t c) {
         case VGM_CHIP_YM2203:  return "YM2203";
         case VGM_CHIP_SCC:     return "SCC";
         case VGM_CHIP_SEGAPCM: return "SegaPCM";
+        case VGM_CHIP_SN76489_2: return "SN76489#2";
         default:               return "?";
     }
 }

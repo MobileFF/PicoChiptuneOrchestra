@@ -1,5 +1,5 @@
 // Host test for master/src/player_config.c's INI parser (player_config_apply).
-// Stubs the three slave_bus_set_* sinks and checks that sections, key
+// Stubs the four slave_bus_set_* sinks and checks that sections, key
 // aliases, name normalisation (case / - / _ / space), comments and bad
 // values are all handled. Compile (one line):
 //   gcc -O0 -g -Wall -I shim -I ../../master/src  test_player_config.c
@@ -108,6 +108,17 @@ int main(void) {
     int n4 = player_config_apply("[player]\ndir = \n"); // empty value -> root_dir = "" (SD root)
     CHK(n4 == 1);
     CHK(*player_config_root_dir() == '\0');
+
+    // [sn76489_2] section-name aliases (second SN76489, VGM dual-chip
+    // support command 0x30 -- see vgm_player.c / vgm_chips.h)
+    for (int i = 0; i < VGM_CHIP_COUNT; i++) { g_present[i] = -1; g_cs[i] = -1; }
+    int n5 = player_config_apply("[sn76489_2]\nenabled = yes\ncs = 27\n");
+    CHK(n5 == 2);
+    CHK(g_present[VGM_CHIP_SN76489_2] == 1);
+    CHK(g_cs[VGM_CHIP_SN76489_2] == 27);
+    int n6 = player_config_apply("[SN76489-2]\ncs = 4\n"); // dash + case variant
+    CHK(n6 == 1);
+    CHK(g_cs[VGM_CHIP_SN76489_2] == 4);
 
     printf("applied=%d\n", n);
     printf(fail ? "FAILED\n" : "ok\n");

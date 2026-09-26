@@ -85,6 +85,25 @@ gzip -k -f some_file
 cmp some_file /tmp/out && echo MATCH
 ```
 
+## Content-based gzip detection (`vgz_looks_like_gzip()`)
+
+Links the *actual shipped* `vgz_inflate.c`. Asserts the 2-byte gzip magic
+(0x1F 0x8B) sniff is right regardless of what the rest of the file holds
+(or whether it exists at all) -- this is what `main.c`'s `play_one()` uses
+to decide whether to decompress a file BY CONTENT rather than by its
+`.vgm`/`.vgz` extension, after a real-world VGM pack
+(`調査用/Ashura-SMS/*.vgm`) turned up gzip-compressed data shipped under a
+plain `.vgm` name; read raw (extension said not to decompress), it failed
+the "Vgm " magic check and was silently skipped every time. Self-contained
+-- takes no argument.
+
+```sh
+gcc -O0 -g -Wall -I shim -I ../../src/master/src -I ../../third_party/miniz_tinfl \
+    test_vgz_sniff.c ../../src/master/src/vgz_inflate.c \
+    ../../third_party/miniz_tinfl/miniz_tinfl.c -o /tmp/vgz_sniff_test
+/tmp/vgz_sniff_test   # prints "ok" and exits 0, or FAIL lines and exits 1
+```
+
 ## Sega PCM chip core
 
 `src/slave_segapcm/src/chip_segapcm.c` has no ymfm dependency, so it builds and
@@ -101,13 +120,34 @@ gcc -O0 -g -Wall -I "$SEGA" test_segapcm_render.c "$SEGA/chip_segapcm.c" \
 
 `src/master/src/player_config.c`'s INI parser (`player_config_apply`) is pure
 string handling; `test_player_config.c` stubs the four `slave_bus_set_*`
-sinks and checks sections, key aliases, name normalisation and bad values
-(including the non-chip `[player]` section's `shuffle`/`skip_button`/
-`preview`/`preview_seconds`/`recursive` keys):
+sinks and checks sections (including `[sn76489_2]`, the second SN76489 --
+see below), key aliases, name normalisation and bad values (including the
+non-chip `[player]` section's `shuffle`/`skip_button`/`preview`/
+`preview_seconds`/`recursive`/`root_dir` keys):
 
 ```sh
 gcc -O0 -g -Wall -I shim -I ../../src/master/src \
     test_player_config.c ../../src/master/src/player_config.c \
     -o /tmp/player_config_test
 /tmp/player_config_test   # prints "ok" and exits 0, or FAIL lines and exits 1
+```
+
+## SN76489 dual-chip support (VGM 0x30, header clock bit 30)
+
+Builds its own recording slave_bus and synthetic VGMs, then asserts:
+`vgm_player_scan_chips()`'s header mask includes the second SN76489
+(`VGM_CHIP_SN76489_2`) exactly when the SN76489 clock field (header 0x0C)
+has bit 30 set, command `0x30 dd` dispatches a `WRITE0` to
+`VGM_CHIP_SN76489_2` (same wire format as `0x50 dd` for the first chip),
+and both chips are `RESET` with the same clock preset (the header has only
+one clock field for both). Also regression-tests `hdr_clock()`'s bit 30/31
+masking -- before it was fixed, a dual-chip clock value overflowed the
+sanity ceiling and made the header mask miss even the FIRST SN76489.
+Self-contained -- takes no argument.
+
+```sh
+gcc -O0 -g -Wall -I shim -I ../../src/master/src -I ../../src/protocol \
+    test_vgm_sn76489_dual.c ../../src/master/src/vgm_player.c ../../src/master/src/vgm_chips.c \
+    -o /tmp/sn76489_dual_test
+/tmp/sn76489_dual_test   # prints "ok" and exits 0, or FAIL lines and exits 1
 ```
