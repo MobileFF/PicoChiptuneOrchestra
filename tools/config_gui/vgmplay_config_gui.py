@@ -8,7 +8,8 @@ optional output volume (percent of unity, 0-255). Plus general (non-chip)
 settings: shuffle playback order,
 the skip button's GPIO, preview mode (cut every song short after N
 seconds), recursive mode (walk every subfolder instead of just the SD card
-root), and the SD-card-relative folder to start scanning from. Mirrors the firmware parser in master/src/player_config.c -- section names
+root), the SD-card-relative folder to start scanning from, and how many
+times a song's loop region repeats. Mirrors the firmware parser in master/src/player_config.c -- section names
 ignore case / '-' / '_' / space, the same key aliases are accepted, and the
 same reserved-pin / duplicate-CS checks are surfaced as warnings.
 
@@ -42,7 +43,8 @@ DEFAULT_GAP = {c[0]: c[3] for c in CHIPS}
 
 # Sentinel `cur` value for the one non-chip section, [player] (general
 # playback settings: shuffle, skip_button, preview/preview_seconds,
-# recursive, root_dir). Mirrors master/src/player_config.c's SECTION_PLAYER.
+# recursive, root_dir, loop_count). Mirrors master/src/player_config.c's
+# SECTION_PLAYER.
 PLAYER_SECTION = "player"
 
 # normalized section name -> canonical
@@ -84,6 +86,8 @@ CS_MIN, CS_MAX = 0, 28
 DEFAULT_SKIP_BUTTON_GPIO = 2       # master/src/main.c's PIN_BTN_SKIP
 DEFAULT_PREVIEW_SECONDS = 30       # master/src/player_config.c's s_preview_seconds
 ROOT_DIR_BUF_SZ = 128              # master/src/player_config.c's ROOT_DIR_BUF_SZ (incl. NUL)
+DEFAULT_LOOP_COUNT = 2             # master/src/player_config.c's s_loop_count
+LOOP_COUNT_MAX = 255               # vgm_player_opts_t.max_loops is a uint8_t
 
 
 def normalize_root_dir(v):
@@ -189,6 +193,11 @@ def parse_ini(text):
                     settings.setdefault(PLAYER_SECTION, {})["recursive"] = b
             elif nk in ("rootdir", "folder", "dir"):
                 settings.setdefault(PLAYER_SECTION, {})["root_dir"] = normalize_root_dir(val)
+            elif nk in ("loopcount", "loops", "maxloops"):
+                if not re.fullmatch(r"\d+", val) or int(val) > LOOP_COUNT_MAX:
+                    notes.append(f"line {lineno}: bad number '{val}' for loop_count (0-{LOOP_COUNT_MAX})")
+                else:
+                    settings.setdefault(PLAYER_SECTION, {})["loop_count"] = int(val)
             else:
                 notes.append(f"line {lineno}: unknown key '{rawkey.strip()}' in [player], ignored")
             continue
@@ -216,8 +225,8 @@ def rows_from_settings(settings):
 
     Includes CHIP_ORDER's per-chip rows plus one PLAYER_SECTION entry
     ({"shuffle": bool, "skip_button": int?, "preview": bool,
-    "preview_seconds": int?, "recursive": bool, "root_dir": str}) for the
-    non-chip [player] section.
+    "preview_seconds": int?, "recursive": bool, "root_dir": str,
+    "loop_count": int?}) for the non-chip [player] section.
     """
     rows = {}
     for chip in CHIP_ORDER:
@@ -236,6 +245,7 @@ def rows_from_settings(settings):
         "preview_seconds": p.get("preview_seconds", None),  # None -> firmware default 30, no line written
         "recursive": p.get("recursive", False),
         "root_dir": p.get("root_dir", ""),  # "" -> SD card root, no line written
+        "loop_count": p.get("loop_count", None),  # None -> firmware default 2, no line written
     }
     return rows
 
@@ -244,7 +254,8 @@ def default_rows():
     rows = {chip: {"enabled": True, "cs": DEFAULT_CS[chip], "gap": None, "volume": None}
             for chip in CHIP_ORDER}
     rows[PLAYER_SECTION] = {"shuffle": False, "skip_button": None, "preview": False,
-                             "preview_seconds": None, "recursive": False, "root_dir": ""}
+                             "preview_seconds": None, "recursive": False, "root_dir": "",
+                             "loop_count": None}
     return rows
 
 
@@ -260,6 +271,8 @@ def generate_ini(rows):
     out.append(f"recursive = {'yes' if rows[PLAYER_SECTION]['recursive'] else 'no'}")
     if rows[PLAYER_SECTION]["root_dir"]:
         out.append(f"root_dir = {rows[PLAYER_SECTION]['root_dir']}")
+    if rows[PLAYER_SECTION]["loop_count"] is not None:
+        out.append(f"loop_count = {int(rows[PLAYER_SECTION]['loop_count'])}")
     out.append("")
     for chip in CHIP_ORDER:
         r = rows[chip]
@@ -308,6 +321,14 @@ def validate(rows):
     # there, not truncated) -- ROOT_DIR_BUF_SZ counts the terminating NUL too.
     if len(rows[PLAYER_SECTION]["root_dir"]) >= ROOT_DIR_BUF_SZ:
         errors.append(f"root_dir is too long (max {ROOT_DIR_BUF_SZ - 1} characters)")
+
+    if rows[PLAYER_SECTION]["loop_count"] is not None:
+        try:
+            lc = int(rows[PLAYER_SECTION]["loop_count"])
+            if not (0 <= lc <= LOOP_COUNT_MAX):
+                errors.append(f"loop_count {lc} out of range (0-{LOOP_COUNT_MAX})")
+        except (TypeError, ValueError):
+            errors.append(f"loop_count '{rows[PLAYER_SECTION]['loop_count']}' is not a number")
 
     for chip in CHIP_ORDER:
         r = rows[chip]
@@ -376,9 +397,10 @@ def run_check(path):
     skip_disp = "default(2)" if p["skip_button"] is None else p["skip_button"]
     prevsec_disp = "default(30)" if p["preview_seconds"] is None else p["preview_seconds"]
     root_disp = "(SD card root)" if not p["root_dir"] else p["root_dir"]
+    loopcnt_disp = f"default({DEFAULT_LOOP_COUNT})" if p["loop_count"] is None else p["loop_count"]
     print(f"  [player]   shuffle={p['shuffle']} skip_button={skip_disp} "
           f"preview={p['preview']} preview_seconds={prevsec_disp} recursive={p['recursive']} "
-          f"root_dir={root_disp}")
+          f"root_dir={root_disp} loop_count={loopcnt_disp}")
     for chip in CHIP_ORDER:
         r = rows[chip]
         gap = "default" if r["gap"] is None else r["gap"]
@@ -424,6 +446,7 @@ def run_gui(initial_path=None):
     preview_seconds_var = tk.StringVar(value="") # [player] preview_seconds (blank = default 30)
     recursive_var = tk.BooleanVar(value=False)   # [player] recursive
     root_dir_var = tk.StringVar(value="")        # [player] root_dir (blank = SD card root)
+    loop_count_var = tk.StringVar(value="")      # [player] loop_count (blank = default 2)
 
     # ---- widgets ----
     pathvar = tk.StringVar(value="(new file - not saved yet)")
@@ -439,6 +462,9 @@ def run_gui(initial_path=None):
     ttk.Label(row1, text="Skip button GPIO:").pack(side="left", padx=(18, 4))
     ttk.Spinbox(row1, from_=CS_MIN, to=CS_MAX, width=5, textvariable=skip_button_var).pack(side="left")
     ttk.Label(row1, text="(blank = default 2)", foreground="#777").pack(side="left", padx=(4, 0))
+    ttk.Label(row1, text="Loop count:").pack(side="left", padx=(18, 4))
+    ttk.Spinbox(row1, from_=0, to=LOOP_COUNT_MAX, width=5, textvariable=loop_count_var).pack(side="left")
+    ttk.Label(row1, text="(blank = default 2; 0 = loop forever)", foreground="#777").pack(side="left", padx=(4, 0))
 
     row2 = ttk.Frame(playerf)
     row2.pack(fill="x", pady=(4, 0))
@@ -521,6 +547,7 @@ def run_gui(initial_path=None):
             }
         skip = skip_button_var.get().strip()
         prevsec = preview_seconds_var.get().strip()
+        loopcnt = loop_count_var.get().strip()
         rows[PLAYER_SECTION] = {
             "shuffle": bool(shuffle_var.get()),
             "skip_button": (int(skip) if re.fullmatch(r"\d+", skip) else (None if skip == "" else skip)),
@@ -528,6 +555,7 @@ def run_gui(initial_path=None):
             "preview_seconds": (int(prevsec) if re.fullmatch(r"\d+", prevsec) else (None if prevsec == "" else prevsec)),
             "recursive": bool(recursive_var.get()),
             "root_dir": normalize_root_dir(root_dir_var.get().strip()),
+            "loop_count": (int(loopcnt) if re.fullmatch(r"\d+", loopcnt) else (None if loopcnt == "" else loopcnt)),
         }
         return rows
 
@@ -546,6 +574,7 @@ def run_gui(initial_path=None):
         preview_seconds_var.set("" if p["preview_seconds"] is None else str(p["preview_seconds"]))
         recursive_var.set(bool(p["recursive"]))
         root_dir_var.set(p["root_dir"])
+        loop_count_var.set("" if p["loop_count"] is None else str(p["loop_count"]))
 
     def do_validate(show_ok=True):
         rows = rows_from_form()

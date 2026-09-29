@@ -282,9 +282,10 @@ static bool play_one(const char *dir_path, const char *fname) {
     oled_ui_set_song(fname);
     vgm_player_opts_t opts = {
         .loop_enabled = true,
-        .max_loops = 2, // play a looping song's loop section twice, then end
-                        // and advance to the next file (skip button still
-                        // cuts it short at any time)
+        // Default 2 (play a looping song's loop section twice, then end and
+        // advance to the next file); [player] loop_count overrides this
+        // (skip button still cuts it short at any time either way).
+        .max_loops = player_config_loop_count(),
         .poll_skip = poll_skip_button,
         .on_chips = oled_ui_set_chips, // fills in the OLED's chip list
     };

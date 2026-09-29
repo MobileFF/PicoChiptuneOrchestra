@@ -7,8 +7,9 @@ card). Per sound chip -- including the optional second SN76489 for VGM's
 enable/disable, chip-select GPIO, and an optional per-byte CS-pulse gap. Plus
 general playback settings: shuffle, the skip button's GPIO, preview mode (cut
 every song short after N seconds), recursive mode (walk every subfolder
-instead of just the start folder), and the SD-card-relative folder to start
-scanning from. See [docs/circuit.md 1.2](../../docs/circuit.md).
+instead of just the start folder), the SD-card-relative folder to start
+scanning from, and how many times a looping song's loop region repeats before
+advancing to the next file. See [docs/circuit.md 1.2](../../docs/circuit.md).
 
 ## Run
 

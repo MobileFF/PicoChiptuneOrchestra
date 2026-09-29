@@ -63,6 +63,15 @@
 //                        ; root_dir instead of the whole card. Default ""
 //                        ; (the SD card root). A missing/misspelled folder
 //                        ; just plays nothing (logged), not a fatal error.
+//   loop_count = 2       ; optional: how many times a song's loop region
+//                        ; plays before advancing to the next file (default
+//                        ; 2, matching the previous hardcoded behaviour). 1 =
+//                        ; play the loop region once (no repeat); 0 = loop
+//                        ; forever until the skip button is pressed (or
+//                        ; preview_seconds cuts it short, if preview is on).
+//                        ; Range 0-255 (vgm_player_opts_t.max_loops is a
+//                        ; single byte). Ignored for a file with no loop
+//                        ; point (always plays through once regardless).
 #pragma once
 
 #include <stddef.h>
@@ -97,6 +106,10 @@ bool player_config_recursive_enabled(void);
 // the SD card root (the original default behaviour). Read by main.c before
 // its first scan pass.
 const char *player_config_root_dir(void);
+
+// [player] loop_count = <0-255>, default 2. Read by main.c to fill in
+// vgm_player_opts_t.max_loops for every song.
+uint8_t player_config_loop_count(void);
 
 // Read `path` from the mounted filesystem and hand it to
 // player_config_apply(). Call after f_mount, before slave_bus_init().

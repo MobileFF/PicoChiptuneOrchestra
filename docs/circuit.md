@@ -101,7 +101,8 @@ enabled = no          ; 無効にするとその VGM コマンドは無視され
 - チップごとの設定とは別に、`[player]`セクションで曲送りボタンのGPIO変更(`skip_button`)、
   試聴モード(`preview`/`preview_seconds`)、SDカード内フォルダの再帰走査(`recursive`)、
   スキャン開始フォルダの変更(`root_dir`。`recursive = yes`と組み合わせると「指定フォルダの
-  中だけを再帰的に再生」できる)も設定できます。詳細は`src/master/src/player_config.h`の
+  中だけを再帰的に再生」できる)、ループ回数の変更(`loop_count`。既定2回、0で曲送りボタンが
+  押されるまで無限ループ、1でループなし)も設定できます。詳細は`src/master/src/player_config.h`の
   コメント、またはひな形`firmware/vgmplay.ini`のコメントを参照してください。
 - テキストエディタで直接書けますが、GUI エディタもあります:
   `python3 tools/config_gui/vgmplay_config_gui.py`(Python 標準ライブラリのみ、

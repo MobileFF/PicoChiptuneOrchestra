@@ -210,6 +210,17 @@
   プリセットの2台目への継承を検証、`test_player_config.c`と
   `test_vgmplay_config_gui.py`にも`[sn76489_2]`のエイリアス解析テストを
   追加。実機確認済み(2026-09-26、デュアル構成での再生を確認)。
+- **ループ再生回数を設定可能に(`[player] loop_count`)**: これまで`main.c`の
+  `play_one()`で`vgm_player_opts_t.max_loops`が`2`固定だった(ループ区間のある
+  曲は必ず2回再生してから次の曲へ)。`vgmplay.ini`の`[player]`セクションに
+  `loop_count = <0-255>`キーを追加し、この値を読んで反映するように変更(既定は
+  従来通り2、後方互換)。`0`は曲送りボタンが押されるまで無限ループ、`1`はループ
+  区間を1回だけ再生(リピートなし)。ループ区間のない曲には影響しない(常に
+  1回再生のみ)。`tools/host_tests/test_player_config.c`にキー解析・エイリアス
+  (`loopcount`/`loops`/`max_loops`)・境界値(0, 255)・範囲外値(256)拒否の
+  テストを追加。`tools/config_gui/vgmplay_config_gui.py`のGUI/CLIにも
+  `loop_count`入力欄(Spinbox、0-255)を追加し、同じ検証ロジックを実装
+  (`tools/config_gui/test_vgmplay_config_gui.py`にテスト追加)。実機確認済み(2026-09-29)。
 
 **PicoChiptuneOrchestra** として初めて公開したスナップショットです(旧作業名
 「VGMPlay 分散マルチMCU」から改称。[vgmrips/vgmplay](https://github.com/vgmrips/vgmplay)本家とは

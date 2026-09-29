@@ -149,6 +149,31 @@ def test_root_dir_roundtrip_normalisation_and_aliases():
     assert "root_dir" not in g.generate_ini(empty_rows)
 
 
+def test_loop_count_roundtrip_and_aliases():
+    rows = g.default_rows()
+    assert rows[g.PLAYER_SECTION]["loop_count"] is None  # default: firmware's own (2)
+
+    rows[g.PLAYER_SECTION]["loop_count"] = 5
+    s, notes = g.parse_ini(g.generate_ini(rows))
+    assert notes == []
+    assert g.rows_from_settings(s) == rows
+
+    # key aliases + section-name normalisation
+    s2, notes2 = g.parse_ini("[ Player ]\nloopcount = 0\n")  # 0 = loop forever
+    assert g.rows_from_settings(s2)[g.PLAYER_SECTION]["loop_count"] == 0
+    assert notes2 == []
+    s3, notes3 = g.parse_ini("[player]\nLOOPS = 255\n")  # boundary-valid (uint8_t max)
+    assert g.rows_from_settings(s3)[g.PLAYER_SECTION]["loop_count"] == 255
+    assert notes3 == []
+    s4, notes4 = g.parse_ini("[player]\nmax_loops = 1\n")
+    assert g.rows_from_settings(s4)[g.PLAYER_SECTION]["loop_count"] == 1
+    assert notes4 == []
+
+    # out-of-range value is rejected with a note, not silently kept
+    _, notes5 = g.parse_ini("[player]\nloop_count = 256\n")
+    assert any("loop_count" in n and "0-255" in n for n in notes5)
+
+
 def test_skip_button_reserved_pin_is_dynamic():
     # Default skip button (GPIO2, unset) still collides with a CS on GPIO2.
     e, w = g.validate({**g.default_rows(),
@@ -247,6 +272,12 @@ def test_validate():
     long_rows[g.PLAYER_SECTION]["root_dir"] = "x" * g.ROOT_DIR_BUF_SZ
     e, _ = g.validate(long_rows)
     assert any("root_dir is too long" in x for x in e)
+
+    # loop_count out of range is a validate() error, not just a parse rejection
+    bad_loop_rows = g.default_rows()
+    bad_loop_rows[g.PLAYER_SECTION]["loop_count"] = 256
+    e, _ = g.validate(bad_loop_rows)
+    assert any("loop_count" in x and "out of range" in x for x in e)
 
 
 def test_resolve_config_path():

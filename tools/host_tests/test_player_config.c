@@ -62,6 +62,7 @@ int main(void) {
         "preview_seconds = 15\n"
         "recursive = yes\n"
         "root_dir = 0:/GAMES/Sega/\n" // drive prefix + trailing slash -> stripped
+        "loop_count = 5\n"
         "wobble = 3\n";          // unknown key in [player] -> ignored
 
     int fail = 0;
@@ -73,6 +74,7 @@ int main(void) {
     CHK(player_config_preview_seconds() == 30);    // built-in default
     CHK(player_config_recursive_enabled() == false); // default before parsing
     CHK(*player_config_root_dir() == '\0');          // default: SD card root
+    CHK(player_config_loop_count() == 2);            // built-in default
     int n = player_config_apply(cfg);
     CHK(player_config_shuffle_enabled() == true);   // [player] shuffle = yes
     CHK(player_config_skip_button_gpio() == 24);    // [player] skip_button = 24
@@ -80,6 +82,7 @@ int main(void) {
     CHK(player_config_preview_seconds() == 15);     // [player] preview_seconds = 15
     CHK(player_config_recursive_enabled() == true); // [player] recursive = yes
     CHK(!strcmp(player_config_root_dir(), "GAMES/Sega")); // drive prefix + trailing slash stripped
+    CHK(player_config_loop_count() == 5);           // [player] loop_count = 5
 
     CHK(g_present[VGM_CHIP_SN76489] == 0);          // enabled = no
     CHK(g_cs[VGM_CHIP_AY8910] == 7);                // [AY-3-8910] cs, inline comment stripped
@@ -93,9 +96,9 @@ int main(void) {
     CHK(g_cs[VGM_CHIP_SCC] == 28);
     CHK(g_present[VGM_CHIP_YM2612] == -1);          // never mentioned -> untouched
     CHK(g_cs[VGM_CHIP_YM2612] == -1);
-    CHK(n == 13); // sn.enabled, ay.cs, ay.gap, ay.volume, segapcm.enabled, segapcm.cs, scc.cs,
+    CHK(n == 14); // sn.enabled, ay.cs, ay.gap, ay.volume, segapcm.enabled, segapcm.cs, scc.cs,
                   // player.shuffle, player.skip_button, player.preview, player.preview_seconds,
-                  // player.recursive, player.root_dir
+                  // player.recursive, player.root_dir, player.loop_count
 
     // root_dir aliases + a plain (no prefix/slashes) value + an empty value
     // resetting it back to "" (SD card root).
@@ -119,6 +122,20 @@ int main(void) {
     int n6 = player_config_apply("[SN76489-2]\ncs = 4\n"); // dash + case variant
     CHK(n6 == 1);
     CHK(g_cs[VGM_CHIP_SN76489_2] == 4);
+
+    // loop_count aliases + boundary values + rejection of an out-of-range one
+    int n7 = player_config_apply("[player]\nloopcount = 0\n"); // 0 = loop forever
+    CHK(n7 == 1);
+    CHK(player_config_loop_count() == 0);
+    int n8 = player_config_apply("[player]\nLOOPS = 255\n"); // boundary-valid (uint8_t max)
+    CHK(n8 == 1);
+    CHK(player_config_loop_count() == 255);
+    int n9 = player_config_apply("[player]\nmax_loops = 1\n");
+    CHK(n9 == 1);
+    CHK(player_config_loop_count() == 1);
+    int n10 = player_config_apply("[player]\nloop_count = 256\n"); // out of uint8_t range -> rejected
+    CHK(n10 == 0);
+    CHK(player_config_loop_count() == 1); // unchanged from n9 above
 
     printf("applied=%d\n", n);
     printf(fail ? "FAILED\n" : "ok\n");

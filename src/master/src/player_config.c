@@ -34,12 +34,14 @@ static uint32_t s_preview_seconds = 30;
 static bool s_recursive_enabled = false;
 #define ROOT_DIR_BUF_SZ 128
 static char s_root_dir[ROOT_DIR_BUF_SZ] = ""; // "" = SD card root
+static uint8_t s_loop_count = 2; // matches main.c's previous hardcoded max_loops
 
 bool player_config_shuffle_enabled(void) { return s_shuffle_enabled; }
 int player_config_skip_button_gpio(void) { return s_skip_button_gpio; }
 bool player_config_preview_enabled(void) { return s_preview_enabled; }
 uint32_t player_config_preview_seconds(void) { return s_preview_seconds; }
 bool player_config_recursive_enabled(void) { return s_recursive_enabled; }
+uint8_t player_config_loop_count(void) { return s_loop_count; }
 const char *player_config_root_dir(void) { return s_root_dir; }
 
 static int lookup_chip(const char *raw) {
@@ -173,6 +175,11 @@ int player_config_apply(const char *text) {
                     s_root_dir[vlen] = '\0';
                     applied++;
                 }
+            } else if (!strcasecmp(key, "loop_count") || !strcasecmp(key, "loopcount") ||
+                       !strcasecmp(key, "loops") || !strcasecmp(key, "max_loops")) {
+                uint32_t u;
+                if (parse_uint(val, &u) && u <= 255) { s_loop_count = (uint8_t)u; applied++; }
+                else printf("config: bad number '%s' for %s (0-255)\n", val, key);
             } else {
                 printf("config: unknown key '%s' in [player], ignored\n", key);
             }
