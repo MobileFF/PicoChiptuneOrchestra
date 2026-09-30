@@ -8,8 +8,12 @@ enable/disable, chip-select GPIO, and an optional per-byte CS-pulse gap. Plus
 general playback settings: shuffle, the skip button's GPIO, preview mode (cut
 every song short after N seconds), recursive mode (walk every subfolder
 instead of just the start folder), the SD-card-relative folder to start
-scanning from, and how many times a looping song's loop region repeats before
-advancing to the next file. See [docs/circuit.md 1.2](../../docs/circuit.md).
+scanning from, how many times a looping song's loop region repeats before
+advancing to the next file, and the opt-in flash-cache mode (copy each song
+into onboard flash before playing it, freeing the SD card's SPI bus for the
+rest of that song). See [docs/circuit.md 1.2](../../docs/circuit.md) and
+[docs/design-notes.md](../../docs/design-notes.md) for the flash-cache
+design tradeoffs.
 
 ## Run
 

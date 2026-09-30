@@ -25,6 +25,7 @@
 #include "oled_ui.h"
 #include "core_fault.h"
 #include "player_config.h"
+#include "flash_disk.h"
 
 #define PIN_BTN_SKIP 2 // to GND; internal pull-up enabled -- built-in default,
                         // overridable via vgmplay.ini's [player] skip_button
@@ -34,6 +35,13 @@ static uint s_btn_skip_gpio = PIN_BTN_SKIP;
 
 static const char *TEMP_VGM_NAME = "_vgztmp.vgm";
 static const char *TEMP_VGM_PATH = "0:/_vgztmp.vgm";
+
+// [player] flash_cache: true once flash_disk_init() has actually mounted (or
+// formatted+mounted) the flash-backed "1:" volume this boot. false the whole
+// session if flash_cache is off, or if it's on but init failed (logged by
+// flash_disk_init() itself) -- either way play_one() just streams from the
+// SD card, same as always.
+static bool s_flash_cache_ready = false;
 
 static bool has_extension(const char *name, const char *ext) {
     size_t nlen = strlen(name), elen = strlen(ext);
@@ -258,6 +266,18 @@ static bool play_one(const char *dir_path, const char *fname) {
         play_path = TEMP_VGM_PATH;
     }
 
+    // [player] flash_cache: copy the (already-decompressed, if it was a
+    // .vgz) song into flash and play THAT copy instead, so the SD card is
+    // free for the rest of this song -- see flash_disk.h. Falls back to
+    // play_path unchanged (streaming from the SD card, as always) if the
+    // cache isn't usable this boot, the song is too big for it, or the copy
+    // itself fails partway.
+    static char flash_play_path[sizeof(FLASH_DISK_CACHE_PATH)];
+    if (s_flash_cache_ready &&
+        flash_disk_cache_file(play_path, flash_play_path, sizeof(flash_play_path))) {
+        play_path = flash_play_path;
+    }
+
     // Skip a song that needs a chip this build doesn't have a slave wired up
     // for -- either no slave exists for it, or vgmplay.ini set it
     // `enabled = no`. vgm_player would just drop that chip's register writes,
@@ -335,6 +355,20 @@ int main(void) {
     // slave_bus_init() -- it acts on the routing table -- and before the
     // skip-button gpio_init below, which needs to know the final pin.
     player_config_autoload();
+
+    // Only mount/format the flash-backed cache volume when it's actually
+    // wanted -- no point in the (one-time) formatting flash wear otherwise.
+    // flash_disk_init()'s flash writes must wait for core1 (launched moments
+    // ago by oled_ui_init(), above) to have registered as a multicore lockout
+    // victim first -- see oled_ui_wait_for_core1_lockout_ready()'s doc
+    // comment. 1s is generous; core1 does this as its very first instruction.
+    if (player_config_flash_cache_enabled()) {
+        if (oled_ui_wait_for_core1_lockout_ready(1000)) {
+            s_flash_cache_ready = flash_disk_init();
+        } else {
+            printf("flash cache: DISABLED -- core1 never came up\n");
+        }
+    }
 
     int cfg_skip_gpio = player_config_skip_button_gpio();
     if (cfg_skip_gpio >= 0) s_btn_skip_gpio = (uint)cfg_skip_gpio;

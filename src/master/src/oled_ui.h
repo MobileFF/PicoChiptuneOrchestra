@@ -37,3 +37,14 @@ void oled_ui_set_chips(uint32_t chip_mask);
 // Non-playing screen (startup banner line, "SD mount failed", "No .vgm
 // files on card", ...). Wrapped across two lines.
 void oled_ui_set_status(const char *msg);
+
+// Blocks (bounded, up to timeout_ms) until core1 has registered itself as a
+// multicore_lockout victim -- always the very first thing core1_main() does,
+// so this only actually waits during the brief window right after
+// oled_ui_init() launches core1. [player] flash_cache's flash_disk_init()
+// must call this before its first flash write (multicore_lockout_start_
+// blocking() hangs if the victim core never called multicore_lockout_
+// victim_init()). Returns false if the timeout elapsed first (would mean
+// core1 never got scheduled at all -- treat that as flash_cache being
+// unavailable this boot, same as any other flash_disk_init() failure).
+bool oled_ui_wait_for_core1_lockout_ready(uint32_t timeout_ms);

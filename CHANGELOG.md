@@ -221,6 +221,26 @@
   テストを追加。`tools/config_gui/vgmplay_config_gui.py`のGUI/CLIにも
   `loop_count`入力欄(Spinbox、0-255)を追加し、同じ検証ロジックを実装
   (`tools/config_gui/test_vgmplay_config_gui.py`にテスト追加)。実機確認済み(2026-09-29)。
+- **曲データのフラッシュ一時キャッシュ(`[player] flash_cache`)**: SPI接続のTFT液晶を
+  OLEDに追加/代替する検討の一環(設計判断の詳細は[design-notes.md](docs/design-notes.md)参照)。
+  `flash_cache = yes`(既定no)にすると、曲頭で(gzip展開後の)VGMデータをこの基板自身の
+  オンボードフラッシュ末尾1MiBへコピーしてから再生するようになり、以降その曲の再生中は
+  SDカードのSPIバスが完全にアイドルになる -- 将来のSPI接続ディスプレイがSDカードと
+  バスを取り合わずに済むようにするための布石。実装は`third_party/no-OS-FatFS-SD-SPI-RPi-Pico`の
+  `glue.c`にFatFsの2台目ボリューム("1:")用ディスパッチを追加し(既存の`FF_VOLUMES=2`設定を
+  活用)、新規`src/master/src/flash_disk.c`がフラッシュの消去粒度(4096バイト)をFatFsの
+  512バイトセクタに変換する薄いdiskioバックエンドと、`f_mkfs`による初回フォーマット、
+  曲ファイルの複製ヘルパーを提供。フラッシュ消去/書き込み中はXIPが両コアとも止まるため、
+  OLED描画のcore1を`multicore_lockout_start/end_blocking()`で退避させる(`oled_ui.c`の
+  `core1_main()`が起動直後に`multicore_lockout_victim_init()`を呼ぶよう変更)。曲がキャッシュ
+  容量(1 MiB)を超える場合やコピー失敗時はSDカードから直接再生する従来動作にフォールバック。
+  `tools/host_tests/test_player_config.c`にキー解析・エイリアス(`flashcache`/`cache`)・
+  bad-boolean拒否のテストを追加、`tools/config_gui/vgmplay_config_gui.py`のGUI/CLIにも
+  同じキーを追加(`tools/config_gui/test_vgmplay_config_gui.py`にテスト追加)。SPI接続TFT
+  液晶自体のドライバはまだ未実装(2026-09-30時点)だが、このキャッシュ機能単体は実機確認済み
+  (2026-09-30、再生に問題なし)。既知の課題として曲間の待ちがflash_cache無効時よりやや長く
+  なる(毎曲のコピー処理が再生開始前に挟まるため)。ユーザーの意向により、この待ち時間の
+  調整はTFT液晶ドライバを含む一連の機能が完成してからまとめて行う予定。
 
 **PicoChiptuneOrchestra** として初めて公開したスナップショットです(旧作業名
 「VGMPlay 分散マルチMCU」から改称。[vgmrips/vgmplay](https://github.com/vgmrips/vgmplay)本家とは

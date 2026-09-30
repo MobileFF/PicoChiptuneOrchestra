@@ -102,8 +102,11 @@ enabled = no          ; 無効にするとその VGM コマンドは無視され
   試聴モード(`preview`/`preview_seconds`)、SDカード内フォルダの再帰走査(`recursive`)、
   スキャン開始フォルダの変更(`root_dir`。`recursive = yes`と組み合わせると「指定フォルダの
   中だけを再帰的に再生」できる)、ループ回数の変更(`loop_count`。既定2回、0で曲送りボタンが
-  押されるまで無限ループ、1でループなし)も設定できます。詳細は`src/master/src/player_config.h`の
-  コメント、またはひな形`firmware/vgmplay.ini`のコメントを参照してください。
+  押されるまで無限ループ、1でループなし)、フラッシュ一時キャッシュ(`flash_cache`。既定no。
+  yesにすると曲頭でこの基板自身のオンボードフラッシュへ曲データをコピーし、再生中はSDカードを
+  アイドルにする -- 詳細な設計判断は[design-notes.md](design-notes.md)参照)も設定できます。
+  詳細は`src/master/src/player_config.h`のコメント、またはひな形`firmware/vgmplay.ini`の
+  コメントを参照してください。
 - テキストエディタで直接書けますが、GUI エディタもあります:
   `python3 tools/config_gui/vgmplay_config_gui.py`(Python 標準ライブラリのみ、
   [tools/config_gui/README.md](../tools/config_gui/README.md))。

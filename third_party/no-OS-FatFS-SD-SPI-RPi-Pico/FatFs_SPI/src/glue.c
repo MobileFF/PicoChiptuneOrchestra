@@ -28,6 +28,15 @@ specific language governing permissions and limitations under the License.
 #include "hw_config.h"
 #include "my_debug.h"
 #include "sd_card.h"
+//
+// PicoChiptuneOrchestra addition: pdrv == FLASH_DISK_PDRV ("1:") is a second,
+// non-SD volume backed by a reserved region of this board's own onboard
+// flash (see master/src/flash_disk.h/.c) -- every function below checks for
+// that pdrv FIRST and dispatches there instead of to sd_get_by_num(), which
+// only ever knows about pdrv 0 (the real SD card). This is the file's own
+// documented purpose ("glue functions... rather than modifying [FatFs]"), so
+// this is the intended place for this kind of project-specific extension.
+#include "flash_disk.h"
 
 #define TRACE_PRINTF(fmt, args...)
 //#define TRACE_PRINTF printf  // task_printf
@@ -39,6 +48,7 @@ specific language governing permissions and limitations under the License.
 DSTATUS disk_status(BYTE pdrv /* Physical drive nmuber to identify the drive */
 ) {
     TRACE_PRINTF(">>> %s\n", __FUNCTION__);
+    if (pdrv == FLASH_DISK_PDRV) return flash_disk_diskio_status();
     sd_card_t *p_sd = sd_get_by_num(pdrv);
     if (!p_sd) return RES_PARERR;
     sd_card_detect(p_sd);   // Fast: just a GPIO read
@@ -53,6 +63,7 @@ DSTATUS disk_initialize(
     BYTE pdrv /* Physical drive nmuber to identify the drive */
 ) {
     TRACE_PRINTF(">>> %s\n", __FUNCTION__);
+    if (pdrv == FLASH_DISK_PDRV) return flash_disk_diskio_initialize();
 
     bool rc = sd_init_driver();
     if (!rc) return RES_NOTRDY;
@@ -96,6 +107,7 @@ DRESULT disk_read(BYTE pdrv,  /* Physical drive nmuber to identify the drive */
                   UINT count    /* Number of sectors to read */
 ) {
     TRACE_PRINTF(">>> %s\n", __FUNCTION__);
+    if (pdrv == FLASH_DISK_PDRV) return flash_disk_diskio_read(buff, sector, count);
     sd_card_t *p_sd = sd_get_by_num(pdrv);
     if (!p_sd) return RES_PARERR;
     int rc = p_sd->read_blocks(p_sd, buff, sector, count);
@@ -114,6 +126,7 @@ DRESULT disk_write(BYTE pdrv, /* Physical drive nmuber to identify the drive */
                    UINT count        /* Number of sectors to write */
 ) {
     TRACE_PRINTF(">>> %s\n", __FUNCTION__);
+    if (pdrv == FLASH_DISK_PDRV) return flash_disk_diskio_write(buff, sector, count);
     sd_card_t *p_sd = sd_get_by_num(pdrv);
     if (!p_sd) return RES_PARERR;
     int rc = p_sd->write_blocks(p_sd, buff, sector, count);
@@ -131,6 +144,7 @@ DRESULT disk_ioctl(BYTE pdrv, /* Physical drive nmuber (0..) */
                    void *buff /* Buffer to send/receive control data */
 ) {
     TRACE_PRINTF(">>> %s\n", __FUNCTION__);
+    if (pdrv == FLASH_DISK_PDRV) return flash_disk_diskio_ioctl(cmd, buff);
     sd_card_t *p_sd = sd_get_by_num(pdrv);
     if (!p_sd) return RES_PARERR;
     switch (cmd) {

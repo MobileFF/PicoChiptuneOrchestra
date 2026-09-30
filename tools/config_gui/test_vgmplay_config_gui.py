@@ -174,6 +174,32 @@ def test_loop_count_roundtrip_and_aliases():
     assert any("loop_count" in n and "0-255" in n for n in notes5)
 
 
+def test_flash_cache_roundtrip_and_aliases():
+    rows = g.default_rows()
+    assert rows[g.PLAYER_SECTION]["flash_cache"] is False  # default
+
+    rows[g.PLAYER_SECTION]["flash_cache"] = True
+    s, notes = g.parse_ini(g.generate_ini(rows))
+    assert notes == []
+    assert g.rows_from_settings(s) == rows
+
+    # key aliases + section-name normalisation
+    s2, notes2 = g.parse_ini("[ Player ]\nflashcache = on\n")
+    assert g.rows_from_settings(s2)[g.PLAYER_SECTION]["flash_cache"] is True
+    assert notes2 == []
+    s3, notes3 = g.parse_ini("[player]\ncache = no\n")
+    assert g.rows_from_settings(s3)[g.PLAYER_SECTION]["flash_cache"] is False
+    assert notes3 == []
+
+    # a bad boolean is rejected with a note, not silently kept
+    _, notes4 = g.parse_ini("[player]\nflash_cache = maybe\n")
+    assert any("bad boolean 'maybe' for flash_cache" in n for n in notes4)
+
+    # false (the default) writes no line at all, same as every other
+    # [player] key that defaults off
+    assert "flash_cache" not in g.generate_ini(g.default_rows())
+
+
 def test_skip_button_reserved_pin_is_dynamic():
     # Default skip button (GPIO2, unset) still collides with a CS on GPIO2.
     e, w = g.validate({**g.default_rows(),

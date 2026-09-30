@@ -35,6 +35,7 @@ static bool s_recursive_enabled = false;
 #define ROOT_DIR_BUF_SZ 128
 static char s_root_dir[ROOT_DIR_BUF_SZ] = ""; // "" = SD card root
 static uint8_t s_loop_count = 2; // matches main.c's previous hardcoded max_loops
+static bool s_flash_cache_enabled = false; // opt-in: see flash_disk.h
 
 bool player_config_shuffle_enabled(void) { return s_shuffle_enabled; }
 int player_config_skip_button_gpio(void) { return s_skip_button_gpio; }
@@ -43,6 +44,7 @@ uint32_t player_config_preview_seconds(void) { return s_preview_seconds; }
 bool player_config_recursive_enabled(void) { return s_recursive_enabled; }
 uint8_t player_config_loop_count(void) { return s_loop_count; }
 const char *player_config_root_dir(void) { return s_root_dir; }
+bool player_config_flash_cache_enabled(void) { return s_flash_cache_enabled; }
 
 static int lookup_chip(const char *raw) {
     static const struct { const char *key; int id; } KEYS[] = {
@@ -180,6 +182,11 @@ int player_config_apply(const char *text) {
                 uint32_t u;
                 if (parse_uint(val, &u) && u <= 255) { s_loop_count = (uint8_t)u; applied++; }
                 else printf("config: bad number '%s' for %s (0-255)\n", val, key);
+            } else if (!strcasecmp(key, "flash_cache") || !strcasecmp(key, "flashcache") ||
+                       !strcasecmp(key, "cache")) {
+                bool b;
+                if (parse_bool(val, &b)) { s_flash_cache_enabled = b; applied++; }
+                else printf("config: bad boolean '%s' for %s\n", val, key);
             } else {
                 printf("config: unknown key '%s' in [player], ignored\n", key);
             }

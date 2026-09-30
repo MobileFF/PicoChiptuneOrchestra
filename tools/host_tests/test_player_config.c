@@ -63,6 +63,7 @@ int main(void) {
         "recursive = yes\n"
         "root_dir = 0:/GAMES/Sega/\n" // drive prefix + trailing slash -> stripped
         "loop_count = 5\n"
+        "flash_cache = yes\n"
         "wobble = 3\n";          // unknown key in [player] -> ignored
 
     int fail = 0;
@@ -75,6 +76,7 @@ int main(void) {
     CHK(player_config_recursive_enabled() == false); // default before parsing
     CHK(*player_config_root_dir() == '\0');          // default: SD card root
     CHK(player_config_loop_count() == 2);            // built-in default
+    CHK(player_config_flash_cache_enabled() == false); // default before parsing
     int n = player_config_apply(cfg);
     CHK(player_config_shuffle_enabled() == true);   // [player] shuffle = yes
     CHK(player_config_skip_button_gpio() == 24);    // [player] skip_button = 24
@@ -83,6 +85,7 @@ int main(void) {
     CHK(player_config_recursive_enabled() == true); // [player] recursive = yes
     CHK(!strcmp(player_config_root_dir(), "GAMES/Sega")); // drive prefix + trailing slash stripped
     CHK(player_config_loop_count() == 5);           // [player] loop_count = 5
+    CHK(player_config_flash_cache_enabled() == true); // [player] flash_cache = yes
 
     CHK(g_present[VGM_CHIP_SN76489] == 0);          // enabled = no
     CHK(g_cs[VGM_CHIP_AY8910] == 7);                // [AY-3-8910] cs, inline comment stripped
@@ -96,9 +99,9 @@ int main(void) {
     CHK(g_cs[VGM_CHIP_SCC] == 28);
     CHK(g_present[VGM_CHIP_YM2612] == -1);          // never mentioned -> untouched
     CHK(g_cs[VGM_CHIP_YM2612] == -1);
-    CHK(n == 14); // sn.enabled, ay.cs, ay.gap, ay.volume, segapcm.enabled, segapcm.cs, scc.cs,
+    CHK(n == 15); // sn.enabled, ay.cs, ay.gap, ay.volume, segapcm.enabled, segapcm.cs, scc.cs,
                   // player.shuffle, player.skip_button, player.preview, player.preview_seconds,
-                  // player.recursive, player.root_dir, player.loop_count
+                  // player.recursive, player.root_dir, player.loop_count, player.flash_cache
 
     // root_dir aliases + a plain (no prefix/slashes) value + an empty value
     // resetting it back to "" (SD card root).
@@ -136,6 +139,17 @@ int main(void) {
     int n10 = player_config_apply("[player]\nloop_count = 256\n"); // out of uint8_t range -> rejected
     CHK(n10 == 0);
     CHK(player_config_loop_count() == 1); // unchanged from n9 above
+
+    // flash_cache aliases + rejection of a bad boolean
+    int n11 = player_config_apply("[player]\nflashcache = on\n");
+    CHK(n11 == 1);
+    CHK(player_config_flash_cache_enabled() == true);
+    int n12 = player_config_apply("[player]\ncache = no\n");
+    CHK(n12 == 1);
+    CHK(player_config_flash_cache_enabled() == false);
+    int n13 = player_config_apply("[player]\nflash_cache = maybe\n"); // bad boolean -> rejected
+    CHK(n13 == 0);
+    CHK(player_config_flash_cache_enabled() == false); // unchanged from n12 above
 
     printf("applied=%d\n", n);
     printf(fail ? "FAILED\n" : "ok\n");

@@ -58,6 +58,11 @@ static volatile uint32_t s_oled_reinits;    // times the render loop had to re-i
 static volatile uint32_t s_oled_frames;     // core1 loop iterations (heartbeat -- stuck if this stops)
 static volatile uint32_t s_oled_shows_ok;   // successful ssd1306_show() pushes
 static volatile uint32_t s_oled_shows_fail; // failed pushes (I2C write didn't complete)
+// Set once core1 has called multicore_lockout_victim_init() (always the very
+// first thing core1_main() does, panel or no panel). [player] flash_cache's
+// flash_disk_init() must not call multicore_lockout_start_blocking() before
+// this is true -- see oled_ui_wait_for_core1_lockout_ready() below.
+static volatile bool s_core1_lockout_ready;
 
 bool     oled_ui_answered(void)      { return s_oled_answered; }
 uint32_t oled_ui_reinit_count(void)  { return s_oled_reinits; }
@@ -66,6 +71,15 @@ void oled_ui_diag(uint32_t *frames, uint32_t *ok, uint32_t *fail, uint32_t *rein
     if (ok)      *ok      = s_oled_shows_ok;
     if (fail)    *fail    = s_oled_shows_fail;
     if (reinits) *reinits = s_oled_reinits;
+}
+
+bool oled_ui_wait_for_core1_lockout_ready(uint32_t timeout_ms) {
+    absolute_time_t deadline = make_timeout_time_ms(timeout_ms);
+    while (!s_core1_lockout_ready) {
+        if (time_reached(deadline)) return false;
+        tight_loop_contents();
+    }
+    return true;
 }
 
 static void publish(ui_mode_t mode, const char *text, uint32_t chip_mask) {
@@ -184,6 +198,14 @@ static bool render(ui_mode_t mode, const char *text, uint32_t chip_mask, uint32_
 }
 
 static void core1_main(void) {
+    // Registers this core as a lockout "victim": [player] flash_cache's
+    // flash writes (flash_disk.c) must park core1 for the duration of every
+    // flash_range_erase()/flash_range_program() call, since those stall XIP
+    // for BOTH cores and core1 is normally fetching this very loop's code
+    // straight out of flash. See multicore_lockout_start_blocking() there.
+    multicore_lockout_victim_init();
+    s_core1_lockout_ready = true;
+
     ui_mode_t last_mode = (ui_mode_t)-1;
     char last_text[64] = {0};
     uint32_t last_mask = 0xFFFFFFFFu;

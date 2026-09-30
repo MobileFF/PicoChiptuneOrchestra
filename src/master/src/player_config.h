@@ -72,6 +72,19 @@
 //                        ; Range 0-255 (vgm_player_opts_t.max_loops is a
 //                        ; single byte). Ignored for a file with no loop
 //                        ; point (always plays through once regardless).
+//   flash_cache = no     ; yes/no (default no). When yes, main.c copies each
+//                        ; song into a 1 MiB scratch region of this board's
+//                        ; own onboard flash (formatted once as a second
+//                        ; FatFs volume, "1:" -- see flash_disk.h) before
+//                        ; playing it, instead of streaming it from the SD
+//                        ; card for the whole song. Once copied, the SD card
+//                        ; sits idle for the rest of that song -- meant to
+//                        ; free the SD card's SPI bus for an SPI-connected
+//                        ; status display without the two needing to
+//                        ; arbitrate for the bus during playback. A song
+//                        ; bigger than the cache (or a copy/format failure)
+//                        ; just falls back to streaming from the SD card
+//                        ; directly, same as flash_cache = no.
 #pragma once
 
 #include <stddef.h>
@@ -110,6 +123,11 @@ const char *player_config_root_dir(void);
 // [player] loop_count = <0-255>, default 2. Read by main.c to fill in
 // vgm_player_opts_t.max_loops for every song.
 uint8_t player_config_loop_count(void);
+
+// [player] flash_cache = yes|no, default false. Read once by main() (to
+// decide whether to call flash_disk_init() at all) and by play_one() (to
+// decide whether to try flash_disk_cache_file() for each song).
+bool player_config_flash_cache_enabled(void);
 
 // Read `path` from the mounted filesystem and hand it to
 // player_config_apply(). Call after f_mount, before slave_bus_init().

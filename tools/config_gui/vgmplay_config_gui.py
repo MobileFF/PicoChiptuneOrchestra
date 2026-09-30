@@ -8,8 +8,10 @@ optional output volume (percent of unity, 0-255). Plus general (non-chip)
 settings: shuffle playback order,
 the skip button's GPIO, preview mode (cut every song short after N
 seconds), recursive mode (walk every subfolder instead of just the SD card
-root), the SD-card-relative folder to start scanning from, and how many
-times a song's loop region repeats. Mirrors the firmware parser in master/src/player_config.c -- section names
+root), the SD-card-relative folder to start scanning from, how many
+times a song's loop region repeats, and the opt-in flash-cache mode (copy
+each song into onboard flash before playing it, freeing the SD card's SPI
+bus for the rest of that song). Mirrors the firmware parser in master/src/player_config.c -- section names
 ignore case / '-' / '_' / space, the same key aliases are accepted, and the
 same reserved-pin / duplicate-CS checks are surfaced as warnings.
 
@@ -43,8 +45,8 @@ DEFAULT_GAP = {c[0]: c[3] for c in CHIPS}
 
 # Sentinel `cur` value for the one non-chip section, [player] (general
 # playback settings: shuffle, skip_button, preview/preview_seconds,
-# recursive, root_dir, loop_count). Mirrors master/src/player_config.c's
-# SECTION_PLAYER.
+# recursive, root_dir, loop_count, flash_cache). Mirrors
+# master/src/player_config.c's SECTION_PLAYER.
 PLAYER_SECTION = "player"
 
 # normalized section name -> canonical
@@ -198,6 +200,12 @@ def parse_ini(text):
                     notes.append(f"line {lineno}: bad number '{val}' for loop_count (0-{LOOP_COUNT_MAX})")
                 else:
                     settings.setdefault(PLAYER_SECTION, {})["loop_count"] = int(val)
+            elif nk in ("flashcache", "cache"):
+                b = parse_bool(val)
+                if b is None:
+                    notes.append(f"line {lineno}: bad boolean '{val}' for flash_cache")
+                else:
+                    settings.setdefault(PLAYER_SECTION, {})["flash_cache"] = b
             else:
                 notes.append(f"line {lineno}: unknown key '{rawkey.strip()}' in [player], ignored")
             continue
@@ -226,7 +234,8 @@ def rows_from_settings(settings):
     Includes CHIP_ORDER's per-chip rows plus one PLAYER_SECTION entry
     ({"shuffle": bool, "skip_button": int?, "preview": bool,
     "preview_seconds": int?, "recursive": bool, "root_dir": str,
-    "loop_count": int?}) for the non-chip [player] section.
+    "loop_count": int?, "flash_cache": bool}) for the non-chip [player]
+    section.
     """
     rows = {}
     for chip in CHIP_ORDER:
@@ -246,6 +255,7 @@ def rows_from_settings(settings):
         "recursive": p.get("recursive", False),
         "root_dir": p.get("root_dir", ""),  # "" -> SD card root, no line written
         "loop_count": p.get("loop_count", None),  # None -> firmware default 2, no line written
+        "flash_cache": p.get("flash_cache", False),
     }
     return rows
 
@@ -255,7 +265,7 @@ def default_rows():
             for chip in CHIP_ORDER}
     rows[PLAYER_SECTION] = {"shuffle": False, "skip_button": None, "preview": False,
                              "preview_seconds": None, "recursive": False, "root_dir": "",
-                             "loop_count": None}
+                             "loop_count": None, "flash_cache": False}
     return rows
 
 
@@ -273,6 +283,8 @@ def generate_ini(rows):
         out.append(f"root_dir = {rows[PLAYER_SECTION]['root_dir']}")
     if rows[PLAYER_SECTION]["loop_count"] is not None:
         out.append(f"loop_count = {int(rows[PLAYER_SECTION]['loop_count'])}")
+    if rows[PLAYER_SECTION]["flash_cache"]:
+        out.append("flash_cache = yes")
     out.append("")
     for chip in CHIP_ORDER:
         r = rows[chip]
@@ -400,7 +412,7 @@ def run_check(path):
     loopcnt_disp = f"default({DEFAULT_LOOP_COUNT})" if p["loop_count"] is None else p["loop_count"]
     print(f"  [player]   shuffle={p['shuffle']} skip_button={skip_disp} "
           f"preview={p['preview']} preview_seconds={prevsec_disp} recursive={p['recursive']} "
-          f"root_dir={root_disp} loop_count={loopcnt_disp}")
+          f"root_dir={root_disp} loop_count={loopcnt_disp} flash_cache={p['flash_cache']}")
     for chip in CHIP_ORDER:
         r = rows[chip]
         gap = "default" if r["gap"] is None else r["gap"]
@@ -447,6 +459,7 @@ def run_gui(initial_path=None):
     recursive_var = tk.BooleanVar(value=False)   # [player] recursive
     root_dir_var = tk.StringVar(value="")        # [player] root_dir (blank = SD card root)
     loop_count_var = tk.StringVar(value="")      # [player] loop_count (blank = default 2)
+    flash_cache_var = tk.BooleanVar(value=False) # [player] flash_cache
 
     # ---- widgets ----
     pathvar = tk.StringVar(value="(new file - not saved yet)")
@@ -478,6 +491,12 @@ def run_gui(initial_path=None):
     row3.pack(fill="x", pady=(4, 0))
     ttk.Checkbutton(row3, text="Recursive (walk every subfolder, not just the start folder)",
                     variable=recursive_var).pack(side="left")
+
+    row3b = ttk.Frame(playerf)
+    row3b.pack(fill="x", pady=(4, 0))
+    ttk.Checkbutton(row3b, text="Flash cache (copy each song into onboard flash before playing "
+                                "it, freeing the SD card during playback)",
+                    variable=flash_cache_var).pack(side="left")
 
     row4 = ttk.Frame(playerf)
     row4.pack(fill="x", pady=(4, 0))
@@ -556,6 +575,7 @@ def run_gui(initial_path=None):
             "recursive": bool(recursive_var.get()),
             "root_dir": normalize_root_dir(root_dir_var.get().strip()),
             "loop_count": (int(loopcnt) if re.fullmatch(r"\d+", loopcnt) else (None if loopcnt == "" else loopcnt)),
+            "flash_cache": bool(flash_cache_var.get()),
         }
         return rows
 
@@ -575,6 +595,7 @@ def run_gui(initial_path=None):
         recursive_var.set(bool(p["recursive"]))
         root_dir_var.set(p["root_dir"])
         loop_count_var.set("" if p["loop_count"] is None else str(p["loop_count"]))
+        flash_cache_var.set(bool(p["flash_cache"]))
 
     def do_validate(show_ok=True):
         rows = rows_from_form()
