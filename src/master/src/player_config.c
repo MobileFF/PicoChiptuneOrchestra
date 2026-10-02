@@ -36,6 +36,7 @@ static bool s_recursive_enabled = false;
 static char s_root_dir[ROOT_DIR_BUF_SZ] = ""; // "" = SD card root
 static uint8_t s_loop_count = 2; // matches main.c's previous hardcoded max_loops
 static bool s_flash_cache_enabled = false; // opt-in: see flash_disk.h
+static bool s_display_is_tft = false; // false = oled (default), true = tft
 
 bool player_config_shuffle_enabled(void) { return s_shuffle_enabled; }
 int player_config_skip_button_gpio(void) { return s_skip_button_gpio; }
@@ -45,6 +46,7 @@ bool player_config_recursive_enabled(void) { return s_recursive_enabled; }
 uint8_t player_config_loop_count(void) { return s_loop_count; }
 const char *player_config_root_dir(void) { return s_root_dir; }
 bool player_config_flash_cache_enabled(void) { return s_flash_cache_enabled; }
+bool player_config_display_is_tft(void) { return s_display_is_tft; }
 
 static int lookup_chip(const char *raw) {
     static const struct { const char *key; int id; } KEYS[] = {
@@ -187,6 +189,10 @@ int player_config_apply(const char *text) {
                 bool b;
                 if (parse_bool(val, &b)) { s_flash_cache_enabled = b; applied++; }
                 else printf("config: bad boolean '%s' for %s\n", val, key);
+            } else if (!strcasecmp(key, "display")) {
+                if (!strcasecmp(val, "oled")) { s_display_is_tft = false; applied++; }
+                else if (!strcasecmp(val, "tft")) { s_display_is_tft = true; applied++; }
+                else printf("config: bad value '%s' for display (oled|tft)\n", val);
             } else {
                 printf("config: unknown key '%s' in [player], ignored\n", key);
             }

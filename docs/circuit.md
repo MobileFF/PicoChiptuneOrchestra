@@ -24,8 +24,11 @@ master (Raspberry Pi Pico) 1台 + slave (RP2040-Zero) 最大8台(+ 任意でSN76
 | スレーブ#7 CS (Sega PCM) | GPIO26 | 〃 |
 | スレーブ#8 CS (SN76489 2台目、任意) | GPIO27 | 〃。VGM仕様の"Dual Chip Support"(コマンド`0x30 dd`)対応。`slave_sn76489.uf2`をもう1枚書き込むだけで、新規ファームウェアは不要(4章参照) |
 | スキップボタン | GPIO2 (既定) | GNDへ、内部プルアップ使用。`vgmplay.ini`の`[player] skip_button`で変更可(例: クローン基板の「USR」ボタンがGPIO24にある場合) |
-| OLED SDA | GPIO0 | I2C0 SDA (SSD1306ステータス表示、任意) |
+| OLED SDA | GPIO0 | I2C0 SDA (SSD1306ステータス表示、任意。`[player] display = oled`が既定) |
 | OLED SCL | GPIO1 | I2C0 SCL (同上) |
+| TFT CS | GPIO3 | SPI0 CS (ソフトウェア制御、SDカードとバス共有)。`[player] display = tft`のときのみ使用 -- 1.1b参照 |
+| TFT DC | GPIO4 | データ/コマンド切替 (同上) |
+| TFT RST | GPIO5 | リセット (同上) |
 
 以前 GPIO0/1 は UART デバッグログ (TX/RX) に使っていましたが、ログは書き込み用USBケーブル経由の
 USB CDC でそのまま見られる ([design-notes.md 8.1](design-notes.md#81-master)) ため、GPIO0/1 は
@@ -57,6 +60,51 @@ OLED 用の I2C0 に転用しました (`src/master/CMakeLists.txt` の `pico_en
 - 描画は **core1** が担当し、約23msかかる全画面転送を core0 の `wait_samples()` タイミングから
   切り離しています (再生テンポに影響させないため)。表示の更新は約150ms間隔。
 - 経過時間はループ地点をまたいでも巻き戻らず加算され続けます (`vgm_player_elapsed_seconds()`)。
+
+### 1.1b TFT ステータス表示 (ST7735, 任意, OLEDの代替)
+
+`vgmplay.ini`の`[player] display = tft`にすると、OLED(I2C0)の代わりにSPI接続のST7735
+(128x160が前提、`src/master/src/st7735.h`)にステータスを表示します。表示内容・core1担当
+という設計はOLEDと同じで、`src/master/src/oled_ui.c`が両者を共通のインターフェース経由で
+切り替えています(更新間隔はバックエンドごとに個別設定、下記参照)。実機確認済み
+(2026-10-02、SDカード上の実VGMファイル再生とTFT表示を同時に確認)。
+
+| ST7735 ピン | 接続先 (Pico) | 備考 |
+|---|---|---|
+| GND | GND | |
+| VCC | 3V3(OUT) | |
+| SCL(SCK) | GPIO18 | **SDカードのSPI0 SCKと共用**(同じ物理線) |
+| SDA(MOSI) | GPIO19 | **SDカードのSPI0 MOSIと共用**(同上) |
+| CS | GPIO3 | このパネル専用のソフトウェア制御CS |
+| DC | GPIO4 | データ/コマンド切替 |
+| RST | GPIO5 | リセット |
+| BL(バックライト) | 3V3 | 通常は常時点灯で問題なし(GPIO制御は今のところ未実装) |
+| MISO | 未接続 | このドライバは書き込み専用(読み出しコマンドを使わない) |
+
+- **SDカードとSPI0の物理線(SCK/MOSI)を共有**します。CSが別なので通常のSPIマルチデバイス
+  配線そのものですが、ソフトウェア側にも排他制御(`src/master/src/spi0_bus_lock.h`、
+  core0のSDアクセスとcore1のTFT描画が同時にバスへ出ないようミューテックスで直列化)が
+  入っています。それでも実機では、SDカード側がCS解除後もMISOを完全には手放さない個体が
+  あること(`third_party/.../sd_spi.c`の`sd_spi_deselect()`のコメント参照)が原因で、
+  TFTの描画(SPI0トラフィック)がSDの読み込みの合間に割り込んで干渉し、SDの読み込みが
+  `FR_DISK_ERR`で失敗する不具合が実機で見つかった(2026-10-02)。**対策としてTFTの再描画
+  間隔をOLEDの150msより大幅に下げてあり(既定500ms、`oled_ui.c`の
+  `display_backend_t.redraw_ms`)、500msでは実機で問題が再現しないことを確認済み**。
+  `[player] flash_cache = yes`との併用はSD読み込みの頻度自体を減らせるので引き続き有効な
+  組み合わせだが、この不具合を解消するための必須条件ではない(詳しい経緯・切り分けの過程は
+  [design-notes.md](design-notes.md)参照)。さらに速い更新間隔が必要になった場合は、
+  MISO(GPIO16)への10kΩ程度のプルアップ抵抗(3V3へ)を試すか、TFTをRP2040のPIOで
+  完全に独立したSPIバスに載せる設計への変更を検討してください。
+- ボーレートはSDカードと同じ20MHz固定(`hw_config.c`と揃えてあり、パネル用に切り替えません --
+  切り替えて戻し忘れると次のSDアクセスが誤ったクロックで走ってしまうため)。
+- このパネルは書き込み専用配線(MISO未使用)が一般的なため、OLEDのI2C ACKのような
+  「本当に配線されているか」の検出ができません -- 何も配線していなくても初期化は「成功」した
+  ように振る舞います(`oled_ui_answered()`は常にtrueになる、`st7735_init()`のコメント参照)。
+- 安価なST7735モジュールは「タブの色」によってRAMオフセットやRGB/BGRの並びが微妙に異なります。
+  縁に黒帯が出る、または赤と青が入れ替わって見える場合は`src/master/src/st7735.h`の
+  `ST7735_XSTART`/`ST7735_YSTART`/`ST7735_MADCTL`を調整してください(コメントに詳細)。
+- CS/DC/RSTのGPIO番号は現時点では`vgmplay.ini`で変更できません(固定、`oled_ui.c`の
+  `TFT_CS_GPIO`等)。配線の都合で別のGPIOが必要になったら対応します。
 
 ### 1.2 設定ファイル `vgmplay.ini` (任意)
 
@@ -104,7 +152,8 @@ enabled = no          ; 無効にするとその VGM コマンドは無視され
   中だけを再帰的に再生」できる)、ループ回数の変更(`loop_count`。既定2回、0で曲送りボタンが
   押されるまで無限ループ、1でループなし)、フラッシュ一時キャッシュ(`flash_cache`。既定no。
   yesにすると曲頭でこの基板自身のオンボードフラッシュへ曲データをコピーし、再生中はSDカードを
-  アイドルにする -- 詳細な設計判断は[design-notes.md](design-notes.md)参照)も設定できます。
+  アイドルにする -- 詳細な設計判断は[design-notes.md](design-notes.md)参照)、ステータス表示の
+  切り替え(`display`。既定`oled`、`tft`でSPI接続のST7735に切り替え -- 1.1b参照)も設定できます。
   詳細は`src/master/src/player_config.h`のコメント、またはひな形`firmware/vgmplay.ini`の
   コメントを参照してください。
 - テキストエディタで直接書けますが、GUI エディタもあります:

@@ -37,6 +37,13 @@ specific language governing permissions and limitations under the License.
 // documented purpose ("glue functions... rather than modifying [FatFs]"), so
 // this is the intended place for this kind of project-specific extension.
 #include "flash_disk.h"
+// PicoChiptuneOrchestra addition: the SD card and (when [player] display =
+// tft) an ST7735 status display share the master's one physical SPI0 bus on
+// separate CS pins -- see spi0_bus_lock.h. Every SD-card branch below (NOT
+// the flash_disk.c ones above, which are memory-mapped flash reads/writes,
+// no SPI0 involved at all) is wrapped in it so a display push from core1 can
+// never land mid-transaction with an SD read/write from core0.
+#include "spi0_bus_lock.h"
 
 #define TRACE_PRINTF(fmt, args...)
 //#define TRACE_PRINTF printf  // task_printf
@@ -51,8 +58,11 @@ DSTATUS disk_status(BYTE pdrv /* Physical drive nmuber to identify the drive */
     if (pdrv == FLASH_DISK_PDRV) return flash_disk_diskio_status();
     sd_card_t *p_sd = sd_get_by_num(pdrv);
     if (!p_sd) return RES_PARERR;
+    spi0_bus_lock();
     sd_card_detect(p_sd);   // Fast: just a GPIO read
-    return p_sd->m_Status;  // See http://elm-chan.org/fsw/ff/doc/dstat.html
+    DSTATUS st = p_sd->m_Status;  // See http://elm-chan.org/fsw/ff/doc/dstat.html
+    spi0_bus_unlock();
+    return st;
 }
 
 /*-----------------------------------------------------------------------*/
@@ -65,13 +75,16 @@ DSTATUS disk_initialize(
     TRACE_PRINTF(">>> %s\n", __FUNCTION__);
     if (pdrv == FLASH_DISK_PDRV) return flash_disk_diskio_initialize();
 
-    bool rc = sd_init_driver();
-    if (!rc) return RES_NOTRDY;
+    spi0_bus_lock();
+    bool rc = sd_init_driver(); // brings up SPI0 itself (baud/format) -- see spi0_bus_lock.h
+    if (!rc) { spi0_bus_unlock(); return RES_NOTRDY; }
 
     sd_card_t *p_sd = sd_get_by_num(pdrv);
-    if (!p_sd) return RES_PARERR;
+    if (!p_sd) { spi0_bus_unlock(); return RES_PARERR; }
     // See http://elm-chan.org/fsw/ff/doc/dstat.html
-    return p_sd->init(p_sd);  
+    DSTATUS st = p_sd->init(p_sd);
+    spi0_bus_unlock();
+    return st;
 }
 
 static int sdrc2dresult(int sd_rc) {
@@ -110,7 +123,9 @@ DRESULT disk_read(BYTE pdrv,  /* Physical drive nmuber to identify the drive */
     if (pdrv == FLASH_DISK_PDRV) return flash_disk_diskio_read(buff, sector, count);
     sd_card_t *p_sd = sd_get_by_num(pdrv);
     if (!p_sd) return RES_PARERR;
+    spi0_bus_lock();
     int rc = p_sd->read_blocks(p_sd, buff, sector, count);
+    spi0_bus_unlock();
     return sdrc2dresult(rc);
 }
 
@@ -129,7 +144,9 @@ DRESULT disk_write(BYTE pdrv, /* Physical drive nmuber to identify the drive */
     if (pdrv == FLASH_DISK_PDRV) return flash_disk_diskio_write(buff, sector, count);
     sd_card_t *p_sd = sd_get_by_num(pdrv);
     if (!p_sd) return RES_PARERR;
+    spi0_bus_lock();
     int rc = p_sd->write_blocks(p_sd, buff, sector, count);
+    spi0_bus_unlock();
     return sdrc2dresult(rc);
 }
 
@@ -147,6 +164,8 @@ DRESULT disk_ioctl(BYTE pdrv, /* Physical drive nmuber (0..) */
     if (pdrv == FLASH_DISK_PDRV) return flash_disk_diskio_ioctl(cmd, buff);
     sd_card_t *p_sd = sd_get_by_num(pdrv);
     if (!p_sd) return RES_PARERR;
+    spi0_bus_lock();
+    DRESULT res;
     switch (cmd) {
         case GET_SECTOR_COUNT: {  // Retrieves number of available sectors, the
                                   // largest allowable LBA + 1, on the drive
@@ -158,8 +177,8 @@ DRESULT disk_ioctl(BYTE pdrv, /* Physical drive nmuber (0..) */
             static LBA_t n;
             n = sd_sectors(p_sd);
             *(LBA_t *)buff = n;
-            if (!n) return RES_ERROR;
-            return RES_OK;
+            res = n ? RES_OK : RES_ERROR;
+            break;
         }
         case GET_BLOCK_SIZE: {  // Retrieves erase block size of the flash
                                 // memory media in unit of sector into the DWORD
@@ -172,11 +191,16 @@ DRESULT disk_ioctl(BYTE pdrv, /* Physical drive nmuber (0..) */
                                 // required when FF_USE_MKFS == 1.
             static DWORD bs = 1;
             *(DWORD *)buff = bs;
-            return RES_OK;
+            res = RES_OK;
+            break;
         }
         case CTRL_SYNC:
-            return RES_OK;
+            res = RES_OK;
+            break;
         default:
-            return RES_PARERR;
+            res = RES_PARERR;
+            break;
     }
+    spi0_bus_unlock();
+    return res;
 }

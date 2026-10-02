@@ -200,6 +200,41 @@ def test_flash_cache_roundtrip_and_aliases():
     assert "flash_cache" not in g.generate_ini(g.default_rows())
 
 
+def test_display_roundtrip_and_tft_validation():
+    rows = g.default_rows()
+    assert rows[g.PLAYER_SECTION]["display"] == "oled"  # default
+
+    rows[g.PLAYER_SECTION]["display"] = "tft"
+    s, notes = g.parse_ini(g.generate_ini(rows))
+    assert notes == []
+    assert g.rows_from_settings(s) == rows
+
+    # case-insensitive value, and a bad one is rejected with a note
+    s2, notes2 = g.parse_ini("[ Player ]\nDISPLAY = TFT\n")
+    assert g.rows_from_settings(s2)[g.PLAYER_SECTION]["display"] == "tft"
+    assert notes2 == []
+    _, notes3 = g.parse_ini("[player]\ndisplay = lcd\n")
+    assert any("bad value 'lcd' for display" in n for n in notes3)
+
+    # the default ("oled") writes no line at all
+    assert "display" not in g.generate_ini(g.default_rows())
+
+    # display = tft reserves its 3 GPIOs dynamically, and nudges towards
+    # flash_cache = yes (a warning, not an error -- it's still safe without it)
+    tft_rows = {**g.default_rows(), g.PLAYER_SECTION: {**g.default_rows()[g.PLAYER_SECTION], "display": "tft"}}
+    e, w = g.validate(tft_rows)
+    assert e == [] and any("flash_cache = yes is recommended" in x for x in w)
+
+    tft_rows["scc"] = {"enabled": True, "cs": g.TFT_CS_GPIO, "gap": None, "volume": None}
+    e, w = g.validate(tft_rows)
+    assert e == [] and any(f"GPIO{g.TFT_CS_GPIO} collides with TFT SPI0 CS" in x for x in w)
+
+    # oled (the default) does NOT reserve those GPIOs
+    oled_rows = {**g.default_rows(), "scc": {"enabled": True, "cs": g.TFT_CS_GPIO, "gap": None, "volume": None}}
+    _, w2 = g.validate(oled_rows)
+    assert not any("TFT" in x for x in w2)
+
+
 def test_skip_button_reserved_pin_is_dynamic():
     # Default skip button (GPIO2, unset) still collides with a CS on GPIO2.
     e, w = g.validate({**g.default_rows(),

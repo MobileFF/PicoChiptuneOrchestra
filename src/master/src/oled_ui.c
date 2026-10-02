@@ -7,11 +7,15 @@
 #include "pico/multicore.h"
 #include "pico/critical_section.h"
 #include "hardware/i2c.h"
+#include "hardware/spi.h"
 #include "hardware/gpio.h"
 
 #include "ssd1306.h"
+#include "st7735.h"
+#include "tft_pins.h"
 #include "vgm_chips.h"
 #include "vgm_player.h"
+#include "player_config.h"
 
 // core1 must wait via busy_wait_*, NOT sleep_ms/sleep_us: pico-sdk's
 // sleep_*() (even from core1) arms an alarm on the DEFAULT alarm pool, which
@@ -33,6 +37,60 @@ static inline void oled_wait_us(uint32_t us) { busy_wait_us(us); }
 #define OLED_SCL_PIN  1
 #define OLED_I2C_HZ   400000
 #define OLED_ADDR     0x3C
+
+// [player] display = tft: an ST7735 on the shared SPI0 bus (see st7735.h /
+// spi0_bus_lock.h and docs/circuit.md). GPIOs are in tft_pins.h (shared with
+// slave_bus.c's CS-collision warning). Not configurable via vgmplay.ini
+// (unlike skip_button's GPIO) -- add that if a wiring actually needs it;
+// these three spare, genuine-Pico-header-exposed GPIOs were free.
+
+// Both panels happen to be 128px wide, so they share one glyph-columns-per-
+// line count; draw_wrapped()/draw_chips() below use SSD1306_COLS_PER_LINE
+// for both backends on that assumption -- this makes it a build error the
+// day that stops being true instead of a silently-wrong TFT layout.
+_Static_assert(SSD1306_COLS_PER_LINE == ST7735_COLS_PER_LINE,
+               "draw_wrapped()/draw_chips() assume both panel backends share one column count");
+
+// --- backend selection (chosen once in oled_ui_init(), from [player] display) --
+
+typedef struct {
+    bool (*init)(void);   // bring up the panel; see each backend's own init doc comment
+    void (*recover)(void); // may be NULL: bus-recovery to retry after init/show fails
+    void (*clear)(void);
+    void (*text)(uint8_t x, uint8_t page, const char *s);
+    bool (*show)(void);
+    uint32_t redraw_ms;   // core1_main()'s per-frame wait -- see below
+} display_backend_t;
+
+static void oled_i2c_bring_up(void); // defined below, near the ssd1306 init wrapper
+
+static bool backend_ssd1306_init(void) { return ssd1306_init(OLED_I2C, OLED_ADDR); }
+static bool backend_st7735_init(void) { return st7735_init(spi0, TFT_CS_GPIO, TFT_DC_GPIO, TFT_RST_GPIO); }
+
+static const display_backend_t BACKEND_SSD1306 = {
+    .init = backend_ssd1306_init, .recover = oled_i2c_bring_up,
+    .clear = ssd1306_clear, .text = ssd1306_text, .show = ssd1306_show,
+    .redraw_ms = 150, // I2C0 is never shared with anything -- no reason to go slower
+};
+// Deliberately much slower than the OLED's 150ms (2026-10-02 finding):
+// frequent SPI0 traffic from the TFT was causing the SD card to see
+// FR_DISK_ERR (suspected cause: the SD card not fully releasing the shared
+// MISO line / ignoring unrelated SCK activity while its own CS is
+// deasserted -- see sd_spi.c's own sd_spi_deselect() comment, and
+// docs/design-notes.md's TFT writeup). Confirmed fixed at 2000ms; now
+// trying 500ms (still a 4x reduction from 150ms) since the status screen's
+// elapsed-time counter only needs ~1s granularity to look right, so
+// anything under ~1000ms already serves that without redrawing needlessly
+// often. Drop lower only with real evidence it's still safe (watch for
+// FR_DISK_ERR in the log); a MISO pull-up or a fully independent PIO-based
+// SPI bus for the TFT are the options if faster-than-this is ever needed.
+static const display_backend_t BACKEND_ST7735 = {
+    .init = backend_st7735_init, .recover = NULL,
+    .clear = st7735_clear, .text = st7735_text, .show = st7735_show,
+    .redraw_ms = 500,
+};
+
+static const display_backend_t *s_backend = &BACKEND_SSD1306; // set in oled_ui_init()
 
 // --- shared state (core0 writes via the setters, core1 reads once/frame) --
 
@@ -105,8 +163,6 @@ void oled_ui_set_chips(uint32_t chip_mask) {
 
 // --- rendering (core1 only) --------------------------------------------------
 
-static void oled_i2c_bring_up(void); // defined below; also called from core1 on recovery
-
 static const char *CHIP_LABEL[VGM_CHIP_COUNT] = {
     [VGM_CHIP_SN76489] = "SN76489",
     [VGM_CHIP_YM2413]  = "YM2413",
@@ -135,8 +191,8 @@ static void draw_wrapped(const char *s, uint8_t page0) {
     } else {
         snprintf(l1, sizeof(l1), "%.*s..", (int)(w - 2), s + w);
     }
-    ssd1306_text(0, page0, l0);
-    ssd1306_text(0, page0 + 1, l1);
+    s_backend->text(0, page0, l0);
+    s_backend->text(0, page0 + 1, l1);
 }
 
 static void draw_chips(uint32_t mask, uint8_t page0) {
@@ -145,7 +201,7 @@ static void draw_chips(uint32_t mask, uint8_t page0) {
     size_t len = 0;
 
     if (mask == 0) {
-        ssd1306_text(0, page0, "detecting...");
+        s_backend->text(0, page0, "detecting...");
         return;
     }
     for (int c = 0; c < VGM_CHIP_COUNT; c++) {
@@ -165,23 +221,23 @@ static void draw_chips(uint32_t mask, uint8_t page0) {
         strcat(line[row], name);
         len += strlen(name);
     }
-    ssd1306_text(0, page0, line[0]);
-    ssd1306_text(0, page0 + 1, line[1]);
+    s_backend->text(0, page0, line[0]);
+    s_backend->text(0, page0 + 1, line[1]);
 }
 
 // Returns false if the framebuffer push to the panel failed.
 static bool render(ui_mode_t mode, const char *text, uint32_t chip_mask, uint32_t elapsed_s) {
-    ssd1306_clear();
+    s_backend->clear();
 
     if (mode == MODE_STATUS) {
         // "PicoChiptuneOrchestra" is 22 chars -- one over SSD1306_COLS_PER_LINE
         // (21), so it's split at the word boundary across two pages instead
         // of relying on draw_wrapped()'s blind char-count cut (which would
         // strand a lone "a" on the second line).
-        ssd1306_text(0, 0, "PicoChiptune");
-        ssd1306_text(0, 1, "Orchestra");
+        s_backend->text(0, 0, "PicoChiptune");
+        s_backend->text(0, 1, "Orchestra");
         draw_wrapped(text, 3);
-        return ssd1306_show();
+        return s_backend->show();
     }
 
     draw_wrapped(text, 0);                 // filename, pages 0-1
@@ -190,11 +246,11 @@ static bool render(ui_mode_t mode, const char *text, uint32_t chip_mask, uint32_
     char t[16];
     snprintf(t, sizeof(t), "Time  %02u:%02u",
              (unsigned)(elapsed_s / 60), (unsigned)(elapsed_s % 60));
-    ssd1306_text(0, 3, t);                 // elapsed, page 3
+    s_backend->text(0, 3, t);              // elapsed, page 3
 
-    ssd1306_text(0, 5, "Chips:");          // page 5
+    s_backend->text(0, 5, "Chips:");       // page 5
     draw_chips(chip_mask, 6);              // pages 6-7
-    return ssd1306_show();
+    return s_backend->show();
 }
 
 static void core1_main(void) {
@@ -217,7 +273,7 @@ static void core1_main(void) {
     for (;;) {
         s_oled_frames++; // heartbeat: if this stops incrementing, core1 is stuck
         if (!panel_up) {
-            if (ssd1306_init(OLED_I2C, OLED_ADDR)) {
+            if (s_backend->init()) {
                 panel_up = true;
                 show_fails = 0;
                 last_mode = (ui_mode_t)-1; // force a full redraw of current state
@@ -225,7 +281,7 @@ static void core1_main(void) {
                 last_mask = last_elapsed = 0xFFFFFFFFu;
                 s_oled_answered = true; // NOT printf -- see note by the decl
             } else {
-                oled_i2c_bring_up(); // clear a possible wedge, then wait and retry
+                if (s_backend->recover) s_backend->recover(); // clear a possible wedge (oled only)
                 oled_wait_ms(1000);
                 continue;
             }
@@ -267,7 +323,7 @@ static void core1_main(void) {
                 continue;
             }
         }
-        oled_wait_ms(150);
+        oled_wait_ms(s_backend->redraw_ms);
     }
 }
 
@@ -305,11 +361,22 @@ void oled_ui_init(void) {
     critical_section_init(&s_cs);
     s_enabled = true; // record song/status from now on even if the panel is
                       // slow to appear -- core1 draws it once it's up.
-    oled_i2c_bring_up();
+
+    if (player_config_display_is_tft()) {
+        s_backend = &BACKEND_ST7735;
+        printf("display: [player] display = tft -- ST7735 on SPI0 "
+               "(CS=GPIO%u DC=GPIO%u RST=GPIO%u), core1 render loop started\n",
+               TFT_CS_GPIO, TFT_DC_GPIO, TFT_RST_GPIO);
+    } else {
+        s_backend = &BACKEND_SSD1306;
+        oled_i2c_bring_up();
+        printf("display: OLED (SSD1306) -- I2C0 up (GPIO0 SDA / GPIO1 SCL), "
+               "core1 render loop started\n");
+    }
     oled_ui_set_status("starting...");
-    // core1 owns the panel: it retries ssd1306_init() until the display
-    // answers, and re-runs bus recovery if it stops answering mid-session,
-    // so a slow / briefly-wedged / late-plugged panel still comes up.
+    // core1 owns the panel: it retries the backend's init() until the
+    // display answers (immediately, for tft -- see st7735_init()'s doc
+    // comment), and re-runs bus recovery if it stops answering mid-session,
+    // so a slow / briefly-wedged / late-plugged oled still comes up.
     multicore_launch_core1(core1_main);
-    printf("OLED: I2C0 up (GPIO0 SDA / GPIO1 SCL), core1 render loop started\n");
 }

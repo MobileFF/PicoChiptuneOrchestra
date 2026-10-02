@@ -106,7 +106,10 @@ SDカードのルート直下に`.vgm`/`.vgz`ファイルを置けば、ファ�
 無限ループ、1でループなし(1回のみ再生)になります。`flash_cache = yes`にすると、曲頭でこの
 基板自身のオンボードフラッシュへ曲データをコピーしてから再生するようになり、再生中はSDカードが
 アイドルになります(既定no。SPI接続の追加ディスプレイ用にSDカードのSPIバスを空けておくための
-機能で、詳細は[docs/design-notes.md](docs/design-notes.md)参照)。`vgmplay.ini`で
+機能で、詳細は[docs/design-notes.md](docs/design-notes.md)参照)。ステータス表示は既定で
+SSD1306(I2C)ですが、`display = tft`にするとSPI接続のST7735に切り替えられます
+(SDカードとSPIバスを共有するため`flash_cache = yes`との併用推奨。配線は
+[docs/circuit.md 1.1b](docs/circuit.md)参照)。`vgmplay.ini`で
 `enabled = no`にした(またはスレーブ自体を用意していない)チップを使う曲は、そのパートが欠けた
 まま鳴らすのではなく**曲ごとスキップ**します。GPIO2(→GND、`[player] skip_button`で変更可)が
 スキップボタンです。masterの動作ログは書き込み用USBケーブルをそのまま

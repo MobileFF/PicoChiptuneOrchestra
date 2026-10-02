@@ -28,6 +28,10 @@ void slave_bus_set_volume_pct(vgm_chip_id_t chip, uint8_t pct);
 // when the button has been moved off its default GPIO. Call before
 // slave_bus_init(). A value outside 0-28 is ignored.
 void slave_bus_set_skip_button_gpio(unsigned gpio);
+// Same idea, for [player] display = tft's ST7735 (tft_pins.h's TFT_CS_GPIO/
+// TFT_DC_GPIO/TFT_RST_GPIO) -- those 3 GPIOs are only actually reserved when
+// tft is selected. Call before slave_bus_init().
+void slave_bus_set_display_is_tft(bool is_tft);
 
 // True if this build's routing table has a slave wired up for this chip.
 bool slave_bus_has_chip(vgm_chip_id_t chip);

@@ -236,11 +236,47 @@
   容量(1 MiB)を超える場合やコピー失敗時はSDカードから直接再生する従来動作にフォールバック。
   `tools/host_tests/test_player_config.c`にキー解析・エイリアス(`flashcache`/`cache`)・
   bad-boolean拒否のテストを追加、`tools/config_gui/vgmplay_config_gui.py`のGUI/CLIにも
-  同じキーを追加(`tools/config_gui/test_vgmplay_config_gui.py`にテスト追加)。SPI接続TFT
-  液晶自体のドライバはまだ未実装(2026-09-30時点)だが、このキャッシュ機能単体は実機確認済み
-  (2026-09-30、再生に問題なし)。既知の課題として曲間の待ちがflash_cache無効時よりやや長く
-  なる(毎曲のコピー処理が再生開始前に挟まるため)。ユーザーの意向により、この待ち時間の
-  調整はTFT液晶ドライバを含む一連の機能が完成してからまとめて行う予定。
+  同じキーを追加(`tools/config_gui/test_vgmplay_config_gui.py`にテスト追加)。このキャッシュ
+  機能単体は実機確認済み(2026-09-30、再生に問題なし)。既知の課題として曲間の待ちが
+  flash_cache無効時よりやや長くなる(毎曲のコピー処理が再生開始前に挟まるため)。ユーザーの
+  意向により、この待ち時間の調整はTFT液晶ドライバを含む一連の機能が完成してからまとめて
+  行う予定。TFT液晶ドライバ自体は次項参照。
+- **SPI接続TFT液晶(ST7735)対応 -- OLEDの代替ステータス表示(`[player] display`)**:
+  `display = oled`(既定、従来通りのSSD1306/I2C0)か`tft`(ST7735/SPI0、上記
+  flash_cacheと組み合わせて使う想定)を選べるように。新規`src/master/src/st7735.c`が
+  128x160 RGB565の全画面プッシュ型ドライバ(`ssd1306.c`と同じ設計)を実装、5x7フォントは
+  両者で共有するため`font5x7.h`へ切り出し。`oled_ui.c`はどちらのパネルも共通の関数ポインタ
+  テーブル(`init`/`clear`/`text`/`show`)越しに叩くよう一般化し、実際の描画ロジック
+  (`render()`等)は無変更。SDカードとSPI0の物理線を共有するため、新規
+  `src/master/src/spi0_bus_lock.c`の`mutex_t`で(`third_party/no-OS-FatFS-SD-SPI-RPi-Pico`の
+  `glue.c`のSDカード分岐と`st7735.c`の全SPI0アクセスを)直列化し、片方の転送がもう片方と
+  同時にバスへ出ないようにした。ボーレートはSDカードと同じ20MHzで固定(切り替えて戻し忘れる
+  と次のSD通信が誤クロックで走るため)。`[player] display`の選択はSDカードの`vgmplay.ini`を
+  読むまで分からないため、`main.c`の起動順序を「SDマウント→設定読み込み→ディスプレイ初期化
+  →マウント失敗チェック」に組み替え(副次的な改善として、SDマウント失敗時のメッセージが
+  OLED/TFTどちらでも表示できるようになった)。CS/DC/RSTは既定GPIO3/4/5固定(`vgmplay.ini`では
+  未対応、`tft_pins.h`)で、`slave_bus.c`のCS衝突警告にも動的に反映される。この配線は
+  書き込み専用が一般的でSSD1306のI2C ACKのような接続確認ができないため、`display = tft`
+  では`oled_ui_answered()`が常にtrueになるなど診断能力が一部落ちる(設計判断・既知の制約の
+  詳細は[design-notes.md](docs/design-notes.md)参照)。`tools/host_tests/test_player_config.c`
+  と`tools/config_gui/`双方に`display`キーのテストを追加(GUI側は動的CS予約警告と
+  flash_cache推奨警告のテストも)。
+
+  **実機確認(2026-10-02)で見つかった不具合3件、いずれも修正済み**: (1) `ST7735_MADCTL`の
+  RGB/BGRビットが逆で赤青が反転 -- `0xC8`→`0xC0`に修正。(2) `st7735_init()`がSCK/MOSIを
+  `GPIO_FUNC_SPI`へ割り当てる`gpio_set_function()`を呼んでおらず、SDカードが無い構成では
+  何も表示されなかった(本番ファームではSDカードドライバが先に同じ設定をしていたため
+  偶然動いて見えていただけ)-- `st7735_init()`自身が設定するよう修正し自己完結化。
+  (3) SD+TFT同時使用時のみ、SDのディレクトリ一覧取得が`FR_DISK_ERR`で失敗 --
+  SDカードがCS解除後もMISOを完全には手放さない個体があり(`sd_spi.c`に元からあったコメント
+  参照)、TFTの頻繁な描画(150ms間隔)がSDの読み込みの合間に割り込んで干渉していたと判明。
+  TFTの再描画間隔をバックエンドごとに設定可能にし(`oled_ui.c`の
+  `display_backend_t.redraw_ms`)、OLEDの150msはそのまま、TFTは500msに変更して解消
+  (ステータス表示の経過時間はもともと1秒刻みなので体感上の影響なし)。
+  切り分けに使った新規単体テストツール3種(`tools/st7735_test/`=MicroPython、
+  `tools/st7735_text_test/`=実ドライバ流用の文字表示単体ファーム、`tools/sd_test/`=
+  実SDスタック流用の読み込み単体ファーム)も追加。実機確認済み(2026-10-02、SDカード上の
+  実VGMファイル再生とTFT表示を同時に確認)。
 
 **PicoChiptuneOrchestra** として初めて公開したスナップショットです(旧作業名
 「VGMPlay 分散マルチMCU」から改称。[vgmrips/vgmplay](https://github.com/vgmrips/vgmplay)本家とは

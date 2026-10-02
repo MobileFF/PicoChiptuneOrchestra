@@ -6,6 +6,7 @@
 #include "pico/stdlib.h"
 
 #include "vgm_spi_protocol.h"
+#include "tft_pins.h"
 
 // ---------------------------------------------------------------------
 // DEFAULT routing table -- which slave boards are wired up and to which
@@ -187,10 +188,22 @@ void slave_bus_set_skip_button_gpio(unsigned gpio) {
     if (gpio <= 28) s_skip_button_gpio = gpio;
 }
 
+// [player] display = tft reserves tft_pins.h's 3 GPIOs -- only actually
+// reserved when tft is selected (the default, oled, uses GPIO0/1 instead,
+// already covered by the static table below).
+static bool s_display_is_tft = false;
+
+void slave_bus_set_display_is_tft(bool is_tft) { s_display_is_tft = is_tft; }
+
 // GPIO the master already uses for something else -- a CS line landing here
 // (via a bad vgmplay.ini) would fight another peripheral. Warn, don't block.
 static bool gpio_is_reserved(uint g, const char **what) {
     if (g == s_skip_button_gpio) { *what = "skip button"; return true; }
+    if (s_display_is_tft) {
+        if (g == TFT_CS_GPIO)  { *what = "TFT SPI0 CS";  return true; }
+        if (g == TFT_DC_GPIO)  { *what = "TFT DC";       return true; }
+        if (g == TFT_RST_GPIO) { *what = "TFT RST";      return true; }
+    }
     switch (g) {
         case 0: case 1:  *what = "OLED I2C0";      return true;
         case 10: case 11:*what = "slave bus SPI1"; return true;

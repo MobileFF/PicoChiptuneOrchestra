@@ -738,13 +738,112 @@ SN76489の2台目対応でヘッダのbit30を実際にチェックする段に�
   予約領域はファームウェアのサイズに関わらずフラッシュの物理末尾から逆算しているため
   (`PICO_FLASH_SIZE_BYTES - FLASH_DISK_BYTES`)、ファームウェアが将来1MiBを超えるまで
   衝突の心配はない(`flash_disk_init()`は念のため`__flash_binary_end`と比較する安全確認も
-  毎起動時に行う)。SPI接続TFT液晶自体のドライバはまだ未実装(2026-09-30時点、ST7735を
-  想定して検討中) -- このキャッシュ機能単体は実機で再生確認済み(2026-09-30)。既知の課題:
+  毎起動時に行う)。このキャッシュ機能単体は実機で再生確認済み(2026-09-30)。既知の課題:
   曲間の待ちがflash_cache無効時より若干長くなる(毎曲の「SDから読んでフラッシュへ消去+
   書き込み」が`play_one()`の再生開始前に挟まるため)。ユーザーからのフィードバックにより、
   この待ち時間の調整はTFT液晶ドライバも含めた一連の機能が完成してからまとめて行う方針
   (例: コピーのチャンク/バッファサイズ見直し、消去済みブロックの再消去省略、コピーと
-  次曲の先読みの重ね合わせなど)。
+  次曲の先読みの重ね合わせなど)。TFT液晶ドライバ自体は次項参照。
+- **SPI接続TFT液晶(ST7735)ドライバの実装 (2026-09-30)**: 上記の設計判断を受けて、OLEDの
+  代替として選べるステータス表示を追加。`[player] display = oled`(既定)/`tft`で切り替え。
+
+  **構成**: `src/master/src/st7735.c`が128x160 RGB565のフレームバッファ+全画面プッシュ型
+  ドライバ(`ssd1306.c`と同じ設計思想 -- 差分描画ではなく毎回全体を転送)。5x7フォントは
+  `ssd1306.c`と共有するため`font5x7.h`へ切り出し(元は`ssd1306.c`内にハードコードされていた
+  テーブルをそのまま移動、重複を避けるため)。`oled_ui.c`はSSD1306/ST7735どちらのバックエンドも
+  同じ4関数(`init`/`clear`/`text`/`show`)の関数ポインタテーブル越しに叩く形に一般化し、
+  `render()`/`draw_wrapped()`/`draw_chips()`は一切変更していない(両パネルとも幅128pxで
+  文字数/行が一致することを`_Static_assert`で保証)。
+
+  **SPI0共有の実際の排他制御**: 設計判断の時点では「flash_cache併用でSDはほぼアイドルになる」
+  という前提だったが、(a) `flash_cache`はあくまで任意設定でtftと独立に選べる、(b) 曲送り時の
+  スキャン/コピー自体はSDへの実アクセスを伴う、という2点から、SD/TFTどちらのSPI0アクセスも
+  素通りさせず`src/master/src/spi0_bus_lock.c`の`mutex_t`で直列化することにした
+  (`pico_sync`、`critical_section_t`ではなくmutexにしたのはSDの1回の読み書きが数十msかかり
+  得るため)。`third_party/no-OS-FatFS-SD-SPI-RPi-Pico`の`glue.c`のSDカード分岐すべてを
+  `spi0_bus_lock()`/`unlock()`で囲み、`st7735.c`側も自分の全SPI0アクセス(初期化・コマンド・
+  データ送信)を同じロックで囲んでいる。ボーレートは`hw_config.c`のSDカードと同じ20MHz固定
+  (パネル用に切り替えて戻し忘れると、次のSD通信が誤ったクロックのまま走ってしまうため
+  -- SDドライバは`sd_init_driver()`時に一度だけボーレートを設定し、以降の読み書きでは
+  再設定しない実装だった)。
+
+  **起動順序の見直し**: `[player] display`の選択はSDカード上の`vgmplay.ini`を読むまで
+  分からないが、従来`main.c`はOLED初期化(`oled_ui_init()`、core1起動)をSDマウントより
+  **前**に行っていた(マウント失敗時にも画面へ「SD mount failed」を出せるように)。
+  設定を先に読んでからディスプレイを初期化する順序に組み替え: `f_mount()` →
+  `player_config_autoload()`(マウント失敗時もf_openが単に失敗するだけで安全に既定値へ
+  フォールバックすることを確認済み)→ `oled_ui_init()`(ここで初めて`display`の値を見て
+  バックエンドを選ぶ)→ マウント失敗チェック(ここへ移動、失敗時のメッセージがOLED/TFT
+  どちらでも出せるようになった -- 従来はOLED起動がマウントより先だったためOLED限定の
+  恩恵だった、副次的な改善)。`[player] flash_cache`用の`flash_disk_init()`呼び出しは
+  core1のロックアウト登録(`oled_ui_wait_for_core1_lockout_ready()`)に依存するため、
+  従来通り`oled_ui_init()`の直後に据え置き。
+
+  **ST7735の検出不能性**: このパネルは書き込み専用配線(MISO未使用)が一般的で、SSD1306の
+  ようなI2C ACKによる「本当に配線されているか」の判定ができない。`st7735_init()`/
+  `st7735_show()`は常に`true`を返す(ドキュメントコメントに明記)。したがって
+  `oled_ui_answered()`はtft選択時は常にtrue、`oled_ui_reinit_count()`は常に0のままになる --
+  「配線し忘れたが気づかない」を検出する手立てはログ上は無い(電源投入後に画面が真っ暗なら
+  配線を疑う、という従来通りの目視確認に頼る)。
+
+  **パネル個体差**: 安価なST7735モジュールは「タブの色」でRAMオフセット・RGB/BGR順が
+  異なる。`ST7735_XSTART`/`YSTART`/`MADCTL`を調整ノブとして`st7735.h`に用意(コメントに
+  症状別の調整方針を記載)。CS/DC/RSTのGPIO(既定3/4/5)は`tft_pins.h`に切り出し、
+  `slave_bus.c`のCS衝突警告(`[player] skip_button`と同じ動的予約の仕組み)にも
+  `[player] display = tft`のときだけ反映されるようにした。
+
+  **テスト**: `[player] display`のパース(`oled`/`tft`、bad値の拒否)は
+  `tools/host_tests/test_player_config.c`に追加、GUI/CLI側も同じキー+動的なCS予約警告+
+  「flash_cache = yesを推奨」の警告を`tools/config_gui/vgmplay_config_gui.py`に実装し
+  `test_vgmplay_config_gui.py`でテスト済み。`st7735.c`/`spi0_bus_lock.c`自体はRP2040の
+  ハードウェアAPI(`hardware/flash.h`同様、`hardware/spi.h`・`pico/mutex.h`)に依存するため
+  ホストテストの対象外(`flash_disk.c`と同様の扱い)。
+
+  **実機確認までに見つかった不具合3件 (2026-10-01〜02)**: 単体テストツールを新規に3つ用意して
+  段階的に切り分けた(`tools/st7735_test/`: MicroPythonでの単体色確認、`tools/st7735_text_test/`:
+  実際の`st7735.c`をそのままリンクした文字表示単体テスト、`tools/sd_test/`: 実際の
+  `hw_config.c`+FatFsをそのままリンクしたSDカード単体読み込みテスト -- いずれもmasterの
+  本番ファームウェアからスレーブ・マルチコア・相手側の機能を取り除いた最小構成で、
+  「本物のドライバコードをどこまで削って動かしても再現するか」を切り分けるためのもの)。
+
+  1. **色が赤と青で反転**: MicroPythonでの単体テストで先に発覚。`ST7735_MADCTL`の
+     BGR/RGBビット(0x08)が逆だった(`0xC8`→`0xC0`に修正、このプロジェクトで実際に使った
+     パネルでの実測に基づく値)。
+  2. **`st7735_text_test`(SDカード無しの単体ファーム)で何も映らない**: `st7735_init()`が
+     `spi_init()`/`spi_set_format()`でSPI0ペリフェラル自体は設定するものの、SCK/MOSIの
+     GPIOをSPI機能へ割り当てる`gpio_set_function(..., GPIO_FUNC_SPI)`を一度も呼んでいなかった
+     ことが原因。本番ファームでは`main.c`の起動順序(SDマウント→設定読込→
+     `oled_ui_init()`)により、SDカードドライバ(`FatFs_SPI/sd_driver/spi.c`)が先に
+     同じGPIOへこの設定を済ませてしまっていたため偶然動いて見えていただけで、SDカードが
+     一切無い単体ファームでは誰もこの設定をしないため何も出力されなかった。`st7735_init()`
+     自身がSCK/MOSIのGPIO機能設定を行うよう修正し、何に依存しているかに関わらず
+     自己完結するようにした。
+  3. **本番ファーム(`master.uf2`、SD+TFT両方有効)で、TFTだけが何も映らず、かつSDの
+     ディレクトリ一覧取得が`FatFs error 1`(`FR_DISK_ERR`、ディスクI/O層の実エラー)で
+     失敗する**: `tools/sd_test/`単体ではSDカードの読み込みが完全に安定していたため、
+     SDカード・配線そのものは健全と判明。残る違いはTFTの定期描画(core1、既定150ms間隔)が
+     動いているかどうかのみだったため、描画間隔を2000msまで落として再現頻度を確認したところ
+     症状が解消、500msまで戻しても実機で問題が再現しないことを確認した。
+     `third_party/no-OS-FatFS-SD-SPI-RPi-Pico/FatFs_SPI/sd_driver/sd_spi.c`の
+     `sd_spi_deselect()`に残っていたコメント("MMC/SDC enables/disables the DO output in
+     synchronising to the SCLK... bus conflict with MMC/SDC and another SPI slave that
+     shares an SPI bus")が示す通り、SDカードはCSをHIGHにしてもMISO(DO)出力を
+     即座には手放さない個体があることが知られており、ライブラリ自身もCS解除直後に
+     ダミーバイト1個を送る対策を既に持っている。ただしこの対策は`disk_read()`等
+     **1回の**FatFs呼び出しの中でしか完結しておらず、`f_findfirst()`のように複数回に
+     分けて`disk_status()`→`disk_read()`を呼ぶ高レベル処理では、その**呼び出しの合間**
+     (mutexが一旦解放される瞬間)にTFTの描画(SPI0トラフィック)が割り込む余地が残っていた。
+     SDカード側がこの間のバス上のSCK/MOSI活動を完全には無視しきれない個体だったために、
+     次の`disk_read()`が`FR_DISK_ERR`で失敗していたと推測される。**恒久対応として
+     TFTの再描画間隔をOLEDの150msから500msへ(`oled_ui.c`の`display_backend_t.redraw_ms`、
+     バックエンドごとに個別設定可能にした)引き下げ、SDアクセスとの衝突頻度を下げることで
+     解消**(ステータス表示の経過時間は元々1秒刻みなので、500msでも体感上の滑らかさは
+     変わらない)。より確実な対策(MISO(GPIO16)へのプルアップ抵抗、またはTFTを
+     RP2040のPIOで完全に独立したSPIバスに載せる設計)は、将来さらに速い更新間隔が
+     必要になった場合の選択肢として残してある。
+
+  3つとも実機で修正・確認済み(2026-10-02、SDカード上の実VGMファイルでの再生とTFT表示を
+  同時に確認)。masterのクロスビルドも確認済み。
 
 実機(RP2040ボード)がない状態でも検証できる範囲はホスト側でテスト済みです:
 

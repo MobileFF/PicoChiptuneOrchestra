@@ -9,10 +9,13 @@ general playback settings: shuffle, the skip button's GPIO, preview mode (cut
 every song short after N seconds), recursive mode (walk every subfolder
 instead of just the start folder), the SD-card-relative folder to start
 scanning from, how many times a looping song's loop region repeats before
-advancing to the next file, and the opt-in flash-cache mode (copy each song
+advancing to the next file, the opt-in flash-cache mode (copy each song
 into onboard flash before playing it, freeing the SD card's SPI bus for the
-rest of that song). See [docs/circuit.md 1.2](../../docs/circuit.md) and
-[docs/design-notes.md](../../docs/design-notes.md) for the flash-cache
+rest of that song), and which status display to drive (the default SSD1306
+OLED, or an ST7735 SPI TFT -- picking tft also dynamically reserves its 3
+GPIOs in the collision checks below, and warns if flash_cache isn't also
+on). See [docs/circuit.md 1.2](../../docs/circuit.md) and
+[docs/design-notes.md](../../docs/design-notes.md) for the flash-cache/TFT
 design tradeoffs.
 
 ## Run

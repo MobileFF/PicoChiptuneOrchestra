@@ -26,6 +26,7 @@
 #include "core_fault.h"
 #include "player_config.h"
 #include "flash_disk.h"
+#include "spi0_bus_lock.h"
 
 #define PIN_BTN_SKIP 2 // to GND; internal pull-up enabled -- built-in default,
                         // overridable via vgmplay.ini's [player] skip_button
@@ -61,14 +62,24 @@ static bool poll_skip_button(void) {
     return false;
 }
 
-// OLED render-loop + core1/core0 fault health check, done here on core0
-// (core1 mustn't printf -- see oled_ui.c). Silent unless something looks
-// wrong (a HardFault was caught, the panel never answered, a push failed, or
-// the loop had to re-init a wedged panel), so normal operation doesn't spam
-// the log with a per-song line -- see core_fault.h and docs/design-notes.md
-// for the HardFault this caught once (a core0 stack overflow corrupting
-// core1's stack, fixed in vgz_inflate.c).
-static void oled_health_check(void) {
+// OLED/TFT render-loop + core1/core0 fault health check, done here on core0
+// (core1 mustn't printf -- see oled_ui.c). Normally silent unless something
+// looks wrong (a HardFault was caught, the panel never answered, a push
+// failed, or the loop had to re-init a wedged panel), so ordinary operation
+// doesn't spam the log with a per-song line -- see core_fault.h and
+// docs/design-notes.md for the HardFault this caught once (a core0 stack
+// overflow corrupting core1's stack, fixed in vgz_inflate.c).
+//
+// `force`: print the diag line unconditionally. Needed for a tft backend
+// (pass true from a spot that's reached even with no song ever playing --
+// see the call sites in the retry loop below): answered()/fail/reinits are
+// defined entirely in terms of an I2C ACK this panel can never give (see
+// st7735_init()'s doc comment), so they're always true/0/0 for tft and the
+// normal "silent unless something looks wrong" gating below would never
+// fire at all -- frames is then the only live signal that core1 is actually
+// running its render loop (a stuck/frozen core1 is the one failure mode
+// that's still visible: frames stops incrementing between calls).
+static void oled_health_check(bool force) {
     if (g_core_fault.count) {
         printf("  *** core%u FAULT vect=%u count=%lu pc=%08lx lr=%08lx psr=%08lx\n",
                g_core_fault.core, g_core_fault.vect, (unsigned long)g_core_fault.count,
@@ -81,8 +92,8 @@ static void oled_health_check(void) {
     }
     uint32_t frames = 0, ok = 0, fail = 0, reinits = 0;
     oled_ui_diag(&frames, &ok, &fail, &reinits);
-    if (!oled_ui_answered() || fail > 0 || reinits > 0) {
-        printf("  OLED: answered=%d frames=%lu shows_ok=%lu shows_fail=%lu reinits=%lu\n",
+    if (force || !oled_ui_answered() || fail > 0 || reinits > 0) {
+        printf("  display: answered=%d frames=%lu shows_ok=%lu shows_fail=%lu reinits=%lu\n",
                (int)oled_ui_answered(), (unsigned long)frames, (unsigned long)ok,
                (unsigned long)fail, (unsigned long)reinits);
     }
@@ -181,8 +192,9 @@ static void visit_dir(int depth) {
     int nsubdirs = 0;
     size_t subdir_names_used = 0;
 
-    if (f_findfirst(&s_scan_dir, &s_scan_info, dir_path, "*") != FR_OK) {
-        printf("WARNING: could not list directory %s, skipping it\n", dir_path);
+    FRESULT fr = f_findfirst(&s_scan_dir, &s_scan_info, dir_path, "*");
+    if (fr != FR_OK) {
+        printf("WARNING: could not list directory %s (FatFs error %d), skipping it\n", dir_path, fr);
         return;
     }
     while (s_scan_info.fname[0] != 0) {
@@ -312,7 +324,7 @@ static bool play_one(const char *dir_path, const char *fname) {
     if (!vgm_player_play(play_path, &opts)) {
         printf("  ERROR: playback aborted (bad/unsupported VGM data)\n");
     }
-    oled_health_check();
+    oled_health_check(false); // silent unless something looks wrong -- see its own doc comment
     sleep_ms(2000); // pause between songs so the next one doesn't start instantly
     return true;
 }
@@ -340,21 +352,25 @@ int main(void) {
         sleep_ms(1000);
     }
 
-    oled_ui_init(); // I2C0 on GPIO0/1 + core1 render loop (no-op if no panel)
+    // [player] display's oled_ui_init() (below) shares the master's
+    // physical SPI0 bus with the SD card when display = tft -- see
+    // spi0_bus_lock.h. Must be ready before ANY SPI0 access at all,
+    // including this very first SD mount.
+    spi0_bus_lock_init();
 
     static FATFS fs;
-    if (f_mount(&fs, "0:", 1) != FR_OK) {
-        printf("ERROR: SD card mount failed -- check wiring and that the card is FAT32. Halting.\n");
-        oled_ui_set_status("SD mount failed");
-        for (;;) tight_loop_contents();
-    }
-    printf("SD card mounted\n");
+    bool sd_mounted = (f_mount(&fs, "0:", 1) == FR_OK);
+    if (sd_mounted) printf("SD card mounted\n");
 
-    // Optional per-chip enable/disable + CS-pin remap from the SD card
-    // (vgmplay.ini, or the first vgmplay*.ini). Must run before
-    // slave_bus_init() -- it acts on the routing table -- and before the
-    // skip-button gpio_init below, which needs to know the final pin.
+    // Optional per-chip enable/disable + CS-pin remap + [player] settings
+    // from the SD card (vgmplay.ini, or the first vgmplay*.ini). Must run
+    // before slave_bus_init() -- it acts on the routing table -- and before
+    // oled_ui_init() below, which needs [player] display to already be
+    // known to pick a backend. Tolerates a failed mount fine (f_open just
+    // fails, every setting keeps its default).
     player_config_autoload();
+
+    oled_ui_init(); // I2C0/SSD1306 or SPI0/ST7735 + core1 render loop, per [player] display
 
     // Only mount/format the flash-backed cache volume when it's actually
     // wanted -- no point in the (one-time) formatting flash wear otherwise.
@@ -370,6 +386,15 @@ int main(void) {
         }
     }
 
+    if (!sd_mounted) {
+        // Shown regardless of [player] display now that the check runs
+        // after oled_ui_init() -- previously only the OLED backend (which
+        // started before the mount attempt) could ever show this.
+        printf("ERROR: SD card mount failed -- check wiring and that the card is FAT32. Halting.\n");
+        oled_ui_set_status("SD mount failed");
+        for (;;) tight_loop_contents();
+    }
+
     int cfg_skip_gpio = player_config_skip_button_gpio();
     if (cfg_skip_gpio >= 0) s_btn_skip_gpio = (uint)cfg_skip_gpio;
     gpio_init(s_btn_skip_gpio);
@@ -378,6 +403,8 @@ int main(void) {
     // So slave_bus_init()'s reserved-pin check warns about wherever the
     // button actually is, not just its firmware default.
     slave_bus_set_skip_button_gpio(s_btn_skip_gpio);
+    // Same idea for [player] display = tft's 3 GPIOs (tft_pins.h).
+    slave_bus_set_display_is_tft(player_config_display_is_tft());
 
     slave_bus_init();
     printf("slave bus initialized\n");
@@ -428,6 +455,9 @@ int main(void) {
                            : "no .vgm/.vgz files found on the SD card root, retrying...\n");
             }
             oled_ui_set_status("No .vgm files on card");
+            oled_health_check(true); // force=true -- no song ever reaches play_one()'s
+                                     // own call to this while stuck here; see this
+                                     // function's own doc comment for why tft needs force.
             sleep_ms(1000); // avoid a tight spin on an empty card
         } else if (s_played_this_pass == 0) {
             // Every file this pass was skipped (all need chips that are
@@ -435,6 +465,7 @@ int main(void) {
             // tilt -- wait a beat so the skip lines stay readable.
             printf("no files playable with the current vgmplay.ini chip config, retrying...\n");
             oled_ui_set_status("No playable songs");
+            oled_health_check(true); // force=true -- see comment above
             sleep_ms(3000);
         }
     }

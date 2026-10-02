@@ -1,23 +1,35 @@
-// oled_ui.h -- status display task for the master. Owns I2C0 (GPIO0 SDA /
-// GPIO1 SCL) and a second core: core0 just publishes "what's playing" with
-// the setters below, core1 renders the SSD1306 on its own schedule so the
-// ~23ms framebuffer push never lands inside vgm_player.c's wait_samples()
-// timing. See docs/circuit.md section 1 for wiring.
+// oled_ui.h -- status display task for the master. Despite the name, this
+// drives EITHER an SSD1306 OLED (I2C0, GPIO0 SDA / GPIO1 SCL -- the default)
+// OR an ST7735 TFT (SPI0, shared with the SD card -- see st7735.h), chosen
+// once at init by [player] display in vgmplay.ini (player_config.h). Owns a
+// second core either way: core0 just publishes "what's playing" with the
+// setters below, core1 renders the panel on its own schedule so the
+// framebuffer push never lands inside vgm_player.c's wait_samples() timing.
+// See docs/circuit.md section 1 for wiring.
 //
-// If no panel ACKs at init, the whole thing silently disables itself and
-// every setter becomes a no-op -- the player runs identically without it.
+// oled (the default): if no panel ACKs at init, the whole thing silently
+// disables itself and every setter becomes a no-op -- the player runs
+// identically without it. tft: this panel is write-only and can't be probed
+// the same way (see st7735_init()'s doc comment), so it always "succeeds" --
+// wiring nothing at all to those pins looks the same as a fully working
+// panel, only silent instead of dark.
 #pragma once
 
 #include <stdbool.h>
 #include <stdint.h>
 
-// Bring up I2C0 on GPIO0/1, probe+init the SSD1306, and (on success)
-// launch core1's render loop. Call once, after stdio and slave_bus init.
+// Bring up whichever panel [player] display selects (default: I2C0/SSD1306
+// on GPIO0/1; see player_config_display_is_tft()) and, once it's up, launch
+// core1's render loop. Call once, after stdio, slave_bus init, and
+// player_config_autoload() (the display choice has to be known already).
 void oled_ui_init(void);
 
 // Diagnostics the core1 render loop records instead of printf-ing (it must
 // not -- see oled_ui.c). core0 can log these. answered = the panel ACKed at
-// least once; reinit_count = times the loop had to re-init a wedged panel.
+// least once (oled backend only -- always true for tft once init runs, see
+// this file's top comment); reinit_count = times the loop had to re-init a
+// wedged panel (oled only -- tft's push can't fail the same way, so this
+// stays 0 there even with nothing wired).
 bool     oled_ui_answered(void);
 uint32_t oled_ui_reinit_count(void);
 // Snapshot of the core1 render loop's counters (any pointer may be NULL):

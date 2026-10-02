@@ -1,0 +1,10 @@
+// tft_pins.h -- GPIOs [player] display = tft reserves for the ST7735 status
+// display (see st7735.h / oled_ui.c). Split into their own header, shared by
+// oled_ui.c (which owns and drives them) and slave_bus.c (which only needs
+// their numbers for its CS-collision warning), so the two definitions can't
+// drift apart.
+#pragma once
+
+#define TFT_CS_GPIO  3
+#define TFT_DC_GPIO  4
+#define TFT_RST_GPIO 5

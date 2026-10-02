@@ -9,18 +9,21 @@ add_executable(master
     src/vgm_player.c
     src/vgz_inflate.c
     src/ssd1306.c
+    src/st7735.c
     src/oled_ui.c
     src/core_fault.c
     src/player_config.c
     src/flash_disk.c
+    src/spi0_bus_lock.c
 )
 
 target_include_directories(master PRIVATE
     ${CMAKE_SOURCE_DIR}/src/protocol
     ${CMAKE_SOURCE_DIR}/third_party/miniz_tinfl
     # So FatFs_SPI/src/glue.c (compiled into this target -- see its INTERFACE
-    # sources below) can #include "flash_disk.h" for the [player] flash_cache
-    # second-volume dispatch it adds; see glue.c's own comment.
+    # sources below) can #include "flash_disk.h" ([player] flash_cache's
+    # second-volume dispatch) and "spi0_bus_lock.h" (SD/TFT SPI0 arbitration);
+    # see glue.c's own comments.
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 

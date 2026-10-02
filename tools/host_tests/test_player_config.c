@@ -64,6 +64,7 @@ int main(void) {
         "root_dir = 0:/GAMES/Sega/\n" // drive prefix + trailing slash -> stripped
         "loop_count = 5\n"
         "flash_cache = yes\n"
+        "display = tft\n"
         "wobble = 3\n";          // unknown key in [player] -> ignored
 
     int fail = 0;
@@ -77,6 +78,7 @@ int main(void) {
     CHK(*player_config_root_dir() == '\0');          // default: SD card root
     CHK(player_config_loop_count() == 2);            // built-in default
     CHK(player_config_flash_cache_enabled() == false); // default before parsing
+    CHK(player_config_display_is_tft() == false);      // default before parsing (oled)
     int n = player_config_apply(cfg);
     CHK(player_config_shuffle_enabled() == true);   // [player] shuffle = yes
     CHK(player_config_skip_button_gpio() == 24);    // [player] skip_button = 24
@@ -86,6 +88,7 @@ int main(void) {
     CHK(!strcmp(player_config_root_dir(), "GAMES/Sega")); // drive prefix + trailing slash stripped
     CHK(player_config_loop_count() == 5);           // [player] loop_count = 5
     CHK(player_config_flash_cache_enabled() == true); // [player] flash_cache = yes
+    CHK(player_config_display_is_tft() == true);      // [player] display = tft
 
     CHK(g_present[VGM_CHIP_SN76489] == 0);          // enabled = no
     CHK(g_cs[VGM_CHIP_AY8910] == 7);                // [AY-3-8910] cs, inline comment stripped
@@ -99,9 +102,10 @@ int main(void) {
     CHK(g_cs[VGM_CHIP_SCC] == 28);
     CHK(g_present[VGM_CHIP_YM2612] == -1);          // never mentioned -> untouched
     CHK(g_cs[VGM_CHIP_YM2612] == -1);
-    CHK(n == 15); // sn.enabled, ay.cs, ay.gap, ay.volume, segapcm.enabled, segapcm.cs, scc.cs,
+    CHK(n == 16); // sn.enabled, ay.cs, ay.gap, ay.volume, segapcm.enabled, segapcm.cs, scc.cs,
                   // player.shuffle, player.skip_button, player.preview, player.preview_seconds,
-                  // player.recursive, player.root_dir, player.loop_count, player.flash_cache
+                  // player.recursive, player.root_dir, player.loop_count, player.flash_cache,
+                  // player.display
 
     // root_dir aliases + a plain (no prefix/slashes) value + an empty value
     // resetting it back to "" (SD card root).
@@ -150,6 +154,17 @@ int main(void) {
     int n13 = player_config_apply("[player]\nflash_cache = maybe\n"); // bad boolean -> rejected
     CHK(n13 == 0);
     CHK(player_config_flash_cache_enabled() == false); // unchanged from n12 above
+
+    // display: case-insensitive value + rejection of a bad one
+    int n14 = player_config_apply("[player]\ndisplay = TFT\n");
+    CHK(n14 == 1);
+    CHK(player_config_display_is_tft() == true);
+    int n15 = player_config_apply("[player]\ndisplay = oled\n");
+    CHK(n15 == 1);
+    CHK(player_config_display_is_tft() == false);
+    int n16 = player_config_apply("[player]\ndisplay = lcd\n"); // bad value -> rejected
+    CHK(n16 == 0);
+    CHK(player_config_display_is_tft() == false); // unchanged from n15 above
 
     printf("applied=%d\n", n);
     printf(fail ? "FAILED\n" : "ok\n");

@@ -85,6 +85,22 @@
 //                        ; bigger than the cache (or a copy/format failure)
 //                        ; just falls back to streaming from the SD card
 //                        ; directly, same as flash_cache = no.
+//   display = oled       ; oled (default) or tft. oled = the SSD1306 on I2C0
+//                        ; (GPIO0/1). tft = an ST7735 on SPI0 instead (shares
+//                        ; the SD card's bus -- see st7735.h and docs/
+//                        ; circuit.md). Its redraw interval is deliberately
+//                        ; slower than the OLED's (oled_ui.c's
+//                        ; display_backend_t.redraw_ms, 500ms vs 150ms) --
+//                        ; hardware-confirmed fix for an SD card that didn't
+//                        ; fully release the shared bus between transactions
+//                        ; at the OLED's faster rate (see design-notes.md).
+//                        ; flash_cache = yes above remains a good complement
+//                        ; (less SD traffic to ever contend with) but isn't
+//                        ; required for this specifically. Chosen once here,
+//                        ; not auto-detected: unlike the OLED (I2C ACK) an
+//                        ; SPI panel can't be told apart from nothing-wired-
+//                        ; at-all, so main.c has to be told which one to
+//                        ; expect.
 #pragma once
 
 #include <stddef.h>
@@ -128,6 +144,10 @@ uint8_t player_config_loop_count(void);
 // decide whether to call flash_disk_init() at all) and by play_one() (to
 // decide whether to try flash_disk_cache_file() for each song).
 bool player_config_flash_cache_enabled(void);
+
+// [player] display = oled|tft, default false (oled). Read once by
+// oled_ui_init() to decide which panel backend to bring up.
+bool player_config_display_is_tft(void);
 
 // Read `path` from the mounted filesystem and hand it to
 // player_config_apply(). Call after f_mount, before slave_bus_init().

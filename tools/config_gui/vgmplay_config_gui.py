@@ -9,9 +9,10 @@ settings: shuffle playback order,
 the skip button's GPIO, preview mode (cut every song short after N
 seconds), recursive mode (walk every subfolder instead of just the SD card
 root), the SD-card-relative folder to start scanning from, how many
-times a song's loop region repeats, and the opt-in flash-cache mode (copy
+times a song's loop region repeats, the opt-in flash-cache mode (copy
 each song into onboard flash before playing it, freeing the SD card's SPI
-bus for the rest of that song). Mirrors the firmware parser in master/src/player_config.c -- section names
+bus for the rest of that song), and which status display to drive (the
+default SSD1306 OLED, or an ST7735 SPI TFT). Mirrors the firmware parser in master/src/player_config.c -- section names
 ignore case / '-' / '_' / space, the same key aliases are accepted, and the
 same reserved-pin / duplicate-CS checks are surfaced as warnings.
 
@@ -45,7 +46,7 @@ DEFAULT_GAP = {c[0]: c[3] for c in CHIPS}
 
 # Sentinel `cur` value for the one non-chip section, [player] (general
 # playback settings: shuffle, skip_button, preview/preview_seconds,
-# recursive, root_dir, loop_count, flash_cache). Mirrors
+# recursive, root_dir, loop_count, flash_cache, display). Mirrors
 # master/src/player_config.c's SECTION_PLAYER.
 PLAYER_SECTION = "player"
 
@@ -90,6 +91,11 @@ DEFAULT_PREVIEW_SECONDS = 30       # master/src/player_config.c's s_preview_seco
 ROOT_DIR_BUF_SZ = 128              # master/src/player_config.c's ROOT_DIR_BUF_SZ (incl. NUL)
 DEFAULT_LOOP_COUNT = 2             # master/src/player_config.c's s_loop_count
 LOOP_COUNT_MAX = 255               # vgm_player_opts_t.max_loops is a uint8_t
+DISPLAY_CHOICES = ("oled", "tft")  # [player] display -- master/src/oled_ui.c
+# GPIOs [player] display = tft reserves (master/src/oled_ui.c's TFT_CS_GPIO/
+# TFT_DC_GPIO/TFT_RST_GPIO) -- only actually reserved when display = tft, so
+# validate() adds these dynamically (same pattern as the skip button's GPIO).
+TFT_CS_GPIO, TFT_DC_GPIO, TFT_RST_GPIO = 3, 4, 5
 
 
 def normalize_root_dir(v):
@@ -206,6 +212,12 @@ def parse_ini(text):
                     notes.append(f"line {lineno}: bad boolean '{val}' for flash_cache")
                 else:
                     settings.setdefault(PLAYER_SECTION, {})["flash_cache"] = b
+            elif nk == "display":
+                lv = val.strip().lower()
+                if lv not in DISPLAY_CHOICES:
+                    notes.append(f"line {lineno}: bad value '{val}' for display (oled|tft)")
+                else:
+                    settings.setdefault(PLAYER_SECTION, {})["display"] = lv
             else:
                 notes.append(f"line {lineno}: unknown key '{rawkey.strip()}' in [player], ignored")
             continue
@@ -256,6 +268,7 @@ def rows_from_settings(settings):
         "root_dir": p.get("root_dir", ""),  # "" -> SD card root, no line written
         "loop_count": p.get("loop_count", None),  # None -> firmware default 2, no line written
         "flash_cache": p.get("flash_cache", False),
+        "display": p.get("display", "oled"),
     }
     return rows
 
@@ -265,7 +278,7 @@ def default_rows():
             for chip in CHIP_ORDER}
     rows[PLAYER_SECTION] = {"shuffle": False, "skip_button": None, "preview": False,
                              "preview_seconds": None, "recursive": False, "root_dir": "",
-                             "loop_count": None, "flash_cache": False}
+                             "loop_count": None, "flash_cache": False, "display": "oled"}
     return rows
 
 
@@ -285,6 +298,8 @@ def generate_ini(rows):
         out.append(f"loop_count = {int(rows[PLAYER_SECTION]['loop_count'])}")
     if rows[PLAYER_SECTION]["flash_cache"]:
         out.append("flash_cache = yes")
+    if rows[PLAYER_SECTION]["display"] != "oled":
+        out.append(f"display = {rows[PLAYER_SECTION]['display']}")
     out.append("")
     for chip in CHIP_ORDER:
         r = rows[chip]
@@ -320,6 +335,15 @@ def validate(rows):
     reserved = dict(RESERVED_PINS)
     if skip_gpio is not None:
         reserved[skip_gpio] = "skip button"
+
+    if rows[PLAYER_SECTION]["display"] == "tft":
+        reserved[TFT_CS_GPIO] = "TFT SPI0 CS"
+        reserved[TFT_DC_GPIO] = "TFT DC"
+        reserved[TFT_RST_GPIO] = "TFT RST"
+        if not rows[PLAYER_SECTION]["flash_cache"]:
+            warnings.append("display = tft without flash_cache = yes: every SD card read during "
+                             "playback will contend with the display for the shared SPI0 bus "
+                             "(safe, just slower/jankier redraws) -- flash_cache = yes is recommended")
 
     if rows[PLAYER_SECTION]["preview_seconds"] is not None:
         try:
@@ -412,7 +436,8 @@ def run_check(path):
     loopcnt_disp = f"default({DEFAULT_LOOP_COUNT})" if p["loop_count"] is None else p["loop_count"]
     print(f"  [player]   shuffle={p['shuffle']} skip_button={skip_disp} "
           f"preview={p['preview']} preview_seconds={prevsec_disp} recursive={p['recursive']} "
-          f"root_dir={root_disp} loop_count={loopcnt_disp} flash_cache={p['flash_cache']}")
+          f"root_dir={root_disp} loop_count={loopcnt_disp} flash_cache={p['flash_cache']} "
+          f"display={p['display']}")
     for chip in CHIP_ORDER:
         r = rows[chip]
         gap = "default" if r["gap"] is None else r["gap"]
@@ -460,6 +485,7 @@ def run_gui(initial_path=None):
     root_dir_var = tk.StringVar(value="")        # [player] root_dir (blank = SD card root)
     loop_count_var = tk.StringVar(value="")      # [player] loop_count (blank = default 2)
     flash_cache_var = tk.BooleanVar(value=False) # [player] flash_cache
+    display_var = tk.StringVar(value="oled")     # [player] display
 
     # ---- widgets ----
     pathvar = tk.StringVar(value="(new file - not saved yet)")
@@ -497,6 +523,14 @@ def run_gui(initial_path=None):
     ttk.Checkbutton(row3b, text="Flash cache (copy each song into onboard flash before playing "
                                 "it, freeing the SD card during playback)",
                     variable=flash_cache_var).pack(side="left")
+
+    row3c = ttk.Frame(playerf)
+    row3c.pack(fill="x", pady=(4, 0))
+    ttk.Label(row3c, text="Status display:").pack(side="left")
+    ttk.Radiobutton(row3c, text="OLED (SSD1306, I2C0)", value="oled",
+                     variable=display_var).pack(side="left", padx=(4, 0))
+    ttk.Radiobutton(row3c, text="TFT (ST7735, SPI0 -- shares the SD card's bus)", value="tft",
+                     variable=display_var).pack(side="left", padx=(8, 0))
 
     row4 = ttk.Frame(playerf)
     row4.pack(fill="x", pady=(4, 0))
@@ -576,6 +610,7 @@ def run_gui(initial_path=None):
             "root_dir": normalize_root_dir(root_dir_var.get().strip()),
             "loop_count": (int(loopcnt) if re.fullmatch(r"\d+", loopcnt) else (None if loopcnt == "" else loopcnt)),
             "flash_cache": bool(flash_cache_var.get()),
+            "display": display_var.get(),
         }
         return rows
 
@@ -596,6 +631,7 @@ def run_gui(initial_path=None):
         root_dir_var.set(p["root_dir"])
         loop_count_var.set("" if p["loop_count"] is None else str(p["loop_count"]))
         flash_cache_var.set(bool(p["flash_cache"]))
+        display_var.set(p["display"])
 
     def do_validate(show_ok=True):
         rows = rows_from_form()
@@ -722,7 +758,8 @@ def run_gui(initial_path=None):
         "About",
         "vgmplay.ini editor\n\nEdits the SD-card config for the VGM multi-MCU "
         "player.\nReserved master GPIOs: 0/1 (OLED), the skip button's GPIO "
-        "(default 2, configurable), 10/11 (slave bus), 16-19 (SD).\n"
+        "(default 2, configurable), 3/4/5 (TFT CS/DC/RST, only if display = "
+        "tft), 10/11 (slave bus), 16-19 (SD).\n"
         "CS GPIO range: 0-28."))
     menubar.add_cascade(label="Help", menu=helpm)
     root.config(menu=menubar)
