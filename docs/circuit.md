@@ -89,10 +89,14 @@ OLED 用の I2C0 に転用しました (`src/master/CMakeLists.txt` の `pico_en
   TFTの描画(SPI0トラフィック)がSDの読み込みの合間に割り込んで干渉し、SDの読み込みが
   `FR_DISK_ERR`で失敗する不具合が実機で見つかった(2026-10-02)。対策は3段構え:
   (1) TFTの再描画間隔をOLEDの150msより大幅に下げてある(既定500ms、`oled_ui.c`の
-  `display_backend_t.redraw_ms`)。(2) **`display = tft`にすると`[player] flash_cache`が
-  (このキー自体の設定に関わらず)強制的に有効になります** -- 曲の再生中はSDカードから
+  `display_backend_t.redraw_ms`)。(2) ~~`display = tft`にすると`[player] flash_cache`が
+  (このキー自体の設定に関わらず)強制的に有効になる~~ -- 曲の再生中はSDカードから
   延々とVGMデータを読み続けるため、たとえ描画間隔を下げても衝突の機会が曲の長さ分だけ
-  残ってしまうことが判明したため(`player_config_flash_cache_enabled()`参照)。
+  残ってしまうという理屈だった(`player_config_flash_cache_enabled()`参照)。**この強制は
+  2026-10-06に撤廃**(後述の本当の原因=SPI1クロストークがこの理屈と無関係に
+  見つかったため、`display = tft` + `flash_cache = no`で実機確認 -- 複数曲の
+  再生で`FR_DISK_ERR`は再発せず、TFT表示も正常だった。`flash_cache`機能自体は
+  デバッグ/用途限定の任意設定として残している。[design-notes.md](design-notes.md)参照)。
   (3) フォルダの一覧取得処理とカバー画像デコード(1.1c参照)、および`flash_cache`自体の
   コピー処理(`flash_disk.c`)という、複数回に分かれたSD/フラッシュ操作をまたぐ区間は、
   `st7735.c`がTFTへの個々の書き込みで使っているのと**同じ`spi0_bus_lock()`ミューテックス**
@@ -122,8 +126,9 @@ OLED 用の I2C0 に転用しました (`src/master/CMakeLists.txt` の `pico_en
   即座に再現することを確認した。**修正**: `slave_bus_init()`でSPI1のSCK/MOSI
   と全チップのCSピンに`gpio_set_slew_rate(GPIO_SLEW_RATE_SLOW)`+
   `gpio_set_drive_strength(GPIO_DRIVE_STRENGTH_2MA)`を適用(`slave_bus.c`)。
-  (1)〜(4)自体は、実際に`display = tft`を選んだ場合に備えて有効なままにして
-  いる。詳しい経緯は[design-notes.md](design-notes.md)参照。
+  (1)(3)(4)は、実際に`display = tft`を選んだ場合に備えて有効なままにしている
+  ((2)のflash_cache強制のみ上記の通り2026-10-06に撤廃、実機確認済み)。詳しい経緯は
+  [design-notes.md](design-notes.md)参照。
 
   さらに速い更新間隔が必要になった場合は、
   MISO(GPIO16)への10kΩ程度の

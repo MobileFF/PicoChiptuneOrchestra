@@ -268,11 +268,13 @@ def rows_from_settings(settings):
         "recursive": p.get("recursive", False),
         "root_dir": p.get("root_dir", ""),  # "" -> SD card root, no line written
         "loop_count": p.get("loop_count", None),  # None -> firmware default 2, no line written
-        # display = tft forces this on at runtime regardless of the file's
-        # own flash_cache setting -- see player_config_flash_cache_enabled()'s
-        # comment in player_config.c -- so reflect that here too rather than
-        # showing a value the firmware will silently override.
-        "flash_cache": p.get("flash_cache", False) or display == "tft",
+        # display = tft used to force this on at runtime regardless of the
+        # file's own flash_cache setting; that forcing was removed in the
+        # firmware on 2026-10-06 once real hardware confirmed display = tft +
+        # flash_cache = no is stable -- see
+        # player_config_flash_cache_enabled()'s comment in player_config.c.
+        # Mirrored here: just the file's own setting, no display coupling.
+        "flash_cache": p.get("flash_cache", False),
         "display": display,
     }
     return rows
@@ -345,12 +347,10 @@ def validate(rows):
         reserved[TFT_CS_GPIO] = "TFT SPI0 CS"
         reserved[TFT_DC_GPIO] = "TFT DC"
         reserved[TFT_RST_GPIO] = "TFT RST"
-        # No warning needed here (unlike earlier revisions of this check):
-        # player_config_flash_cache_enabled() in the firmware now forces
-        # flash_cache on whenever display = tft regardless of this file's
-        # own flash_cache setting, and rows_from_settings() already reflects
-        # that forced value in rows[PLAYER_SECTION]["flash_cache"] -- there's
-        # nothing left for the user to fix.
+        # No warning needed here: display = tft + flash_cache = no is a
+        # valid, hardware-confirmed combination since 2026-10-06 (no longer
+        # firmware-overridden) -- see player_config_flash_cache_enabled()'s
+        # comment in player_config.c.
 
     if rows[PLAYER_SECTION]["preview_seconds"] is not None:
         try:
@@ -616,11 +616,9 @@ def run_gui(initial_path=None):
             "recursive": bool(recursive_var.get()),
             "root_dir": normalize_root_dir(root_dir_var.get().strip()),
             "loop_count": (int(loopcnt) if re.fullmatch(r"\d+", loopcnt) else (None if loopcnt == "" else loopcnt)),
-            # display = tft forces this on at the firmware level regardless
-            # of the checkbox (see rows_from_settings()'s matching comment)
-            # -- OR it in here too so a saved file always says what will
-            # actually happen, even if the box itself was left unchecked.
-            "flash_cache": bool(flash_cache_var.get()) or display_var.get() == "tft",
+            # No longer OR'd with display == "tft" -- see rows_from_settings()'s
+            # matching comment (removed 2026-10-06, player_config.c).
+            "flash_cache": bool(flash_cache_var.get()),
             "display": display_var.get(),
         }
         return rows

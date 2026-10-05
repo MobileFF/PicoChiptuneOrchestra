@@ -45,15 +45,21 @@ uint32_t player_config_preview_seconds(void) { return s_preview_seconds; }
 bool player_config_recursive_enabled(void) { return s_recursive_enabled; }
 uint8_t player_config_loop_count(void) { return s_loop_count; }
 const char *player_config_root_dir(void) { return s_root_dir; }
-// display = tft forces this on regardless of the ini's own flash_cache
-// setting: TFT streaming VGM straight off the SD card for a whole song
-// means continuous SD reads contending with core1's periodic TFT redraw for
-// the whole song, not just the brief windows flash_disk_cache_file() (and
-// main.c's/cover_image.c's own multicore_lockout wrapping) was built to
-// bound -- see docs/design-notes.md's TFT writeup. Forcing it here, in the
-// one place every caller already reads this through, means it can't be
-// forgotten/misconfigured in vgmplay.ini.
-bool player_config_flash_cache_enabled(void) { return s_flash_cache_enabled || s_display_is_tft; }
+// display = tft USED TO force this on regardless of the ini's own
+// flash_cache setting, on the theory that TFT streaming VGM straight off
+// the SD card for a whole song meant continuous SD reads contending with
+// core1's periodic TFT redraw for the whole song. That theory predated
+// finding the actual root cause of this project's long FR_DISK_ERR saga --
+// SPI1 (slave chip bus) electrical crosstalk onto SPI0 (the SD card) from
+// physically adjacent GPIOs, fixed in slave_bus.c via
+// gpio_set_slew_rate()/gpio_set_drive_strength() -- which had nothing to do
+// with TFT vs. OLED or with flash_cache at all. The forcing was removed
+// 2026-10-06 and display=tft + flash_cache=no confirmed stable on real
+// hardware (multiple songs, no FR_DISK_ERR, TFT rendering normally) -- see
+// docs/design-notes.md's TFT writeup. flash_cache itself stays as an
+// opt-in debug/special-case knob (e.g. freeing the SD card's SPI bus
+// entirely for something else); it's just no longer coupled to display.
+bool player_config_flash_cache_enabled(void) { return s_flash_cache_enabled; }
 bool player_config_display_is_tft(void) { return s_display_is_tft; }
 
 static int lookup_chip(const char *raw) {

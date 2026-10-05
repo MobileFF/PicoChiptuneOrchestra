@@ -173,19 +173,21 @@ int main(void) {
     CHK(n16 == 0);
     CHK(player_config_display_is_tft() == false); // unchanged from n15 above
 
-    // display = tft forces flash_cache on regardless of the ini's own
-    // flash_cache setting -- see player_config_flash_cache_enabled()'s own
-    // comment (streaming SD reads for a whole song would otherwise contend
-    // with the TFT's periodic redraw for that whole song, not just the
-    // brief windows the rest of the codebase bounds this risk for). n12
-    // above already left flash_cache's OWN setting at "no".
+    // display = tft used to force flash_cache on regardless of the ini's own
+    // flash_cache setting -- see player_config_flash_cache_enabled()'s
+    // comment in player_config.c for why that forcing was removed 2026-10-06
+    // (it predated finding the real FR_DISK_ERR root cause, which had
+    // nothing to do with TFT or flash_cache; real hardware then confirmed
+    // display=tft + flash_cache=no is stable). flash_cache now tracks ONLY
+    // its own key, independent of display. n12 above already left
+    // flash_cache's OWN setting at "no".
     CHK(player_config_flash_cache_enabled() == false); // still oled (n15) + cache=no (n12)
     int n17 = player_config_apply("[player]\ndisplay = tft\n");
     CHK(n17 == 1);
-    CHK(player_config_flash_cache_enabled() == true); // forced on by display=tft...
+    CHK(player_config_flash_cache_enabled() == false); // no longer forced on by display=tft
     int n18 = player_config_apply("[player]\ndisplay = oled\n");
     CHK(n18 == 1);
-    CHK(player_config_flash_cache_enabled() == false); // ...and released once back to oled
+    CHK(player_config_flash_cache_enabled() == false); // unchanged
 
     printf("applied=%d\n", n);
     printf(fail ? "FAILED\n" : "ok\n");

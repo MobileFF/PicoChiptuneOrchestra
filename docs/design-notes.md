@@ -1234,6 +1234,31 @@ SN76489の2台目対応でヘッダのbit30を実際にチェックする段に�
   TFTバックライト配線)はどちらもソフトウェアとは無関係で、ユーザー側の設定・
   配線修正で解決した。これで2026-10-02から続いた`FR_DISK_ERR`調査は完結した。
 
+- **`display = tft`のflash_cache強制を撤廃 (実機確認済み, 2026-10-06)**: 上記の通り
+  `FR_DISK_ERR`の本当の原因はSPI1→SPI0クロストークであり、TFTや`flash_cache`の
+  有無とは無関係だったと判明した。ところが`player_config_flash_cache_enabled()`
+  の`display = tft`強制(`s_flash_cache_enabled || s_display_is_tft`)は、まだ
+  本当の原因が分かっていなかった時点の「TFT描画とSD連続ストリーミングがバスを
+  奪い合う」という(今では誤りと分かった)仮説のために導入したものだった。
+  ユーザーから「この強制は本当に必要なのか、試行錯誤の名残ではないか」という
+  指摘があり、SPI1クロストーク対策(スルーレート制限)が入った今、強制を外して
+  `display = tft` + `flash_cache = no`(SDから曲全体をストリーミング、TFTは
+  並行して再描画し続ける)が実機で安定するかを検証することにした。
+  `player_config_flash_cache_enabled()`を`return s_flash_cache_enabled;`に戻し
+  (`display`との連動を削除)、`main.c`のログ行、`player_config.h`/
+  `firmware/vgmplay.ini`のコメント、`tools/config_gui/vgmplay_config_gui.py`の
+  対応するOR条件、および両方のテストスイート(`test_player_config.c`の
+  n17/n18、`test_vgmplay_config_gui.py`の`test_display_roundtrip_and_tft_validation`)
+  を合わせて更新した。**実機で確認済み(2026-10-06)**: `display = tft` +
+  `flash_cache = no`の組み合わせで複数曲を再生し、`FR_DISK_ERR`は一度も発生せず、
+  TFTの画面表示も正常だった。SPI1クロストーク対策だけで`FR_DISK_ERR`は再発しない
+  ことが確定したため、flash_cache強制は不要と判断し撤廃を確定した。`flash_cache`
+  機能自体は(任意設定の)デバッグ/用途限定機能として引き続き残している
+  (SDカードのSPIバスを完全に空けたい場合などに有効)。万一将来また同種の問題が
+  出た場合は、`player_config_flash_cache_enabled()`を
+  `s_flash_cache_enabled || s_display_is_tft`に戻すだけで元の(安全側の)挙動に
+  復帰できる。
+
 実機(RP2040ボード)がない状態でも検証できる範囲はホスト側でテスト済みです:
 
 - `tools/host_tests/`: `src/master/src/vgm_player.c`/`vgz_inflate.c` を実ソースのまま

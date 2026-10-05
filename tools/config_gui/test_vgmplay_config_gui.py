@@ -204,11 +204,10 @@ def test_display_roundtrip_and_tft_validation():
     rows = g.default_rows()
     assert rows[g.PLAYER_SECTION]["display"] == "oled"  # default
 
-    # display = tft forces flash_cache on too (see rows_from_settings()'s own
-    # comment -- mirrors player_config_flash_cache_enabled() in the real
-    # firmware), so a row dict claiming tft must also claim flash_cache for
-    # a round-trip through generate_ini()/parse_ini()/rows_from_settings()
-    # to come back equal.
+    # flash_cache and display have been independent since 2026-10-06 (see
+    # rows_from_settings()'s comment) -- set both explicitly here so the
+    # round-trip through generate_ini()/parse_ini()/rows_from_settings()
+    # comes back equal regardless.
     rows[g.PLAYER_SECTION]["display"] = "tft"
     rows[g.PLAYER_SECTION]["flash_cache"] = True
     s, notes = g.parse_ini(g.generate_ini(rows))
@@ -225,12 +224,13 @@ def test_display_roundtrip_and_tft_validation():
     # the default ("oled") writes no line at all
     assert "display" not in g.generate_ini(g.default_rows())
 
-    # display = tft WITHOUT an explicit flash_cache = yes in the file still
-    # comes back forced on (the firmware forces it regardless -- nothing for
-    # the user to fix, so no warning either).
+    # display = tft WITHOUT an explicit flash_cache = yes in the file no
+    # longer comes back forced on -- the firmware's forcing was removed
+    # 2026-10-06 (hardware-confirmed stable); flash_cache now tracks only
+    # its own key, independent of display.
     s4, notes4 = g.parse_ini("[player]\ndisplay = tft\n")
     assert notes4 == []
-    assert g.rows_from_settings(s4)[g.PLAYER_SECTION]["flash_cache"] is True
+    assert g.rows_from_settings(s4)[g.PLAYER_SECTION]["flash_cache"] is False
 
     # display = tft reserves its 3 GPIOs dynamically
     tft_rows = {**g.default_rows(),

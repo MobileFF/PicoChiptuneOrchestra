@@ -7,6 +7,16 @@
 
 ## [Unreleased]
 
+### Changed
+- **`display = tft`による`[player] flash_cache`強制を撤廃 (実機確認済み, 2026-10-06)**:
+  この強制は、`FR_DISK_ERR`の本当の原因(SPI1→SPI0クロストーク、下記参照)が判明する
+  前に「TFT描画とSD連続ストリーミングの競合」という仮説のために入れたもの。真の原因が
+  TFT/flash_cacheと無関係だったことが分かったため、`player_config_flash_cache_enabled()`
+  の強制(`|| s_display_is_tft`)を外し、`flash_cache`キー単独の設定に戻した。
+  `display = tft` + `flash_cache = no`で複数曲の再生を実機確認し、`FR_DISK_ERR`は
+  再発せず、TFT表示も正常だった。`flash_cache`機能自体はデバッグ/用途限定の任意設定
+  として引き続き利用可能 -- 詳細は[docs/design-notes.md](docs/design-notes.md)参照。
+
 ### Fixed
 - **gzip圧縮された`.vgm`ファイルが「不正なVGM」として無言でスキップされる不具合**:
   拡張子だけを見て解凍要否を判断していたため、`調査用/Ashura-SMS/*.vgm`のように

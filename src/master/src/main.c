@@ -444,8 +444,6 @@ int main(void) {
     // victim first -- see oled_ui_wait_for_core1_lockout_ready()'s doc
     // comment. 1s is generous; core1 does this as its very first instruction.
     if (player_config_flash_cache_enabled()) {
-        if (player_config_display_is_tft())
-            printf("flash cache: forced on by [player] display = tft (see player_config.c)\n");
         if (oled_ui_wait_for_core1_lockout_ready(1000)) {
             s_flash_cache_ready = flash_disk_init();
         } else {
