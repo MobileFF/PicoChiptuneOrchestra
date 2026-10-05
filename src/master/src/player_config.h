@@ -84,7 +84,9 @@
 //                        ; arbitrate for the bus during playback. A song
 //                        ; bigger than the cache (or a copy/format failure)
 //                        ; just falls back to streaming from the SD card
-//                        ; directly, same as flash_cache = no.
+//                        ; directly, same as flash_cache = no. Forced on
+//                        ; regardless of this setting when display = tft
+//                        ; below is selected -- see that key's own comment.
 //   display = oled       ; oled (default) or tft. oled = the SSD1306 on I2C0
 //                        ; (GPIO0/1). tft = an ST7735 on SPI0 instead (shares
 //                        ; the SD card's bus -- see st7735.h and docs/
@@ -94,10 +96,15 @@
 //                        ; hardware-confirmed fix for an SD card that didn't
 //                        ; fully release the shared bus between transactions
 //                        ; at the OLED's faster rate (see design-notes.md).
-//                        ; flash_cache = yes above remains a good complement
-//                        ; (less SD traffic to ever contend with) but isn't
-//                        ; required for this specifically. Chosen once here,
-//                        ; not auto-detected: unlike the OLED (I2C ACK) an
+//                        ; tft FORCES flash_cache = yes on regardless of
+//                        ; this key's own setting above (see
+//                        ; player_config_flash_cache_enabled()'s comment in
+//                        ; player_config.c) -- streaming a whole song
+//                        ; straight off the SD card would otherwise contend
+//                        ; with the TFT's redraw for that whole song, not
+//                        ; just the brief windows this project's other
+//                        ; multicore_lockout uses bound that risk for.
+//                        ; Chosen once here, not auto-detected: unlike the OLED (I2C ACK) an
 //                        ; SPI panel can't be told apart from nothing-wired-
 //                        ; at-all, so main.c has to be told which one to
 //                        ; expect.

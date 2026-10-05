@@ -100,9 +100,13 @@ the "Vgm " magic check and was silently skipped every time. Self-contained
 ```sh
 gcc -O0 -g -Wall -I shim -I ../../src/master/src -I ../../third_party/miniz_tinfl \
     test_vgz_sniff.c ../../src/master/src/vgz_inflate.c \
+    ../../src/master/src/inflate_scratch.c \
     ../../third_party/miniz_tinfl/miniz_tinfl.c -o /tmp/vgz_sniff_test
 /tmp/vgz_sniff_test   # prints "ok" and exits 0, or FAIL lines and exits 1
 ```
+
+(`inflate_scratch.c` is the shared tinfl scratch buffer vgz_inflate.c and
+cover_image.c's PNG decoding both use -- see inflate_scratch.h.)
 
 ## Sega PCM chip core
 
@@ -150,4 +154,44 @@ gcc -O0 -g -Wall -I shim -I ../../src/master/src -I ../../src/protocol \
     test_vgm_sn76489_dual.c ../../src/master/src/vgm_player.c ../../src/master/src/vgm_chips.c \
     -o /tmp/sn76489_dual_test
 /tmp/sn76489_dual_test   # prints "ok" and exits 0, or FAIL lines and exits 1
+```
+
+## Cover-art image decoding (JPEG/PNG, `[player] display = tft` only)
+
+Links the *actual shipped* `cover_image.c`, `third_party/tjpgd/tjpgd.c`
+(baseline JPEG), `third_party/miniz_tinfl` and `inflate_scratch.c` (PNG's
+DEFLATE step) against real test images under `cover_test_images/`
+(committed -- see `gen_cover_test_images.py`'s own doc comment for how to
+regenerate them, needs Pillow; not needed to just run this test). Stubs only
+`st7735_cover_clear()`/`st7735_cover_blit()` (captured into a plain test
+framebuffer instead of real SPI hardware), `player_config_display_is_tft()`
+(forced true), and `spi0_bus_lock()`/`spi0_bus_unlock()` (no-ops -- a single-
+threaded host has no core1 TFT redraw to serialize against). This test is
+what caught cover_image.c's PNG decoder treating
+IDAT data as raw DEFLATE instead of zlib-wrapped DEFLATE (RFC 1950 -- a 2-byte
+header + Adler32 trailer around the raw stream) -- every real PNG failed to
+decode at all until `TINFL_FLAG_PARSE_ZLIB_HEADER` was added, caught
+immediately by this test against real fixtures before ever reaching hardware.
+
+Checks: a solid-color PNG wider than the cover area scales down and centers
+correctly (and the letterboxed margin stays background colour); a small RGBA
+PNG is centered without upscaling (alpha channel ignored, not blended); an
+8-bit grayscale PNG decodes correctly; a solid-color baseline JPEG decodes to
+a close (not exact -- lossy) match; a palette (color type 3) PNG's actual
+PLTE lookup resolves both palette entries it uses to the right colour at
+both 8 bits/pixel and, separately, 4 bits/pixel -- a small palette is very
+often packed below 8 bits/pixel in real files (added 2026-10-04/05 --
+real-world retro game cover art is very often palette PNGs, so this needed
+supporting, not just failing gracefully); a missing file and a NULL path
+both leave the area blank. Must be run from `tools/host_tests/` (relative
+paths into `cover_test_images/`).
+
+```sh
+gcc -O0 -g -Wall -I shim -I ../../src/master/src -I ../../third_party/tjpgd \
+    -I ../../third_party/miniz_tinfl -lm \
+    test_cover_image.c ../../src/master/src/cover_image.c \
+    ../../src/master/src/inflate_scratch.c \
+    ../../third_party/tjpgd/tjpgd.c ../../third_party/miniz_tinfl/miniz_tinfl.c \
+    -o /tmp/cover_image_test
+(cd tools/host_tests && /tmp/cover_image_test)   # prints "ok" and exits 0, or FAIL lines and exits 1
 ```

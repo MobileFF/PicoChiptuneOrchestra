@@ -8,6 +8,7 @@ add_executable(master
     src/vgm_chips.c
     src/vgm_player.c
     src/vgz_inflate.c
+    src/inflate_scratch.c
     src/ssd1306.c
     src/st7735.c
     src/oled_ui.c
@@ -15,11 +16,30 @@ add_executable(master
     src/player_config.c
     src/flash_disk.c
     src/spi0_bus_lock.c
+    src/cover_image.c
 )
+
+# main.c prints __DATE__/__TIME__ at boot specifically so a freshly-flashed
+# board's own serial log can answer "is this actually the firmware I just
+# built?" without guessing (see that printf's own comment -- a stale .uf2,
+# e.g. from a Google Drive sync lag, has repeatedly cost real debugging time
+# in this project). But __DATE__/__TIME__ only reflects when THIS translation
+# unit was last compiled -- if a build only touches some OTHER file,
+# main.c.o is untouched and the timestamp silently goes stale even though
+# the binary is genuinely new. touch_main_c's only job is to mark main.c as
+# modified (mtime bump, no content change) before every single build of
+# `master`, forcing a real recompile -- and therefore a fresh timestamp --
+# unconditionally, regardless of what else did or didn't change. Always
+# considered out of date (no OUTPUT), so it always re-runs.
+add_custom_target(touch_main_c
+    COMMAND ${CMAKE_COMMAND} -E touch ${CMAKE_CURRENT_SOURCE_DIR}/src/main.c
+)
+add_dependencies(master touch_main_c)
 
 target_include_directories(master PRIVATE
     ${CMAKE_SOURCE_DIR}/src/protocol
     ${CMAKE_SOURCE_DIR}/third_party/miniz_tinfl
+    ${CMAKE_SOURCE_DIR}/third_party/tjpgd
     # So FatFs_SPI/src/glue.c (compiled into this target -- see its INTERFACE
     # sources below) can #include "flash_disk.h" ([player] flash_cache's
     # second-volume dispatch) and "spi0_bus_lock.h" (SD/TFT SPI0 arbitration);
@@ -40,6 +60,7 @@ endif()
 
 target_sources(master PRIVATE
     ${CMAKE_SOURCE_DIR}/third_party/miniz_tinfl/miniz_tinfl.c
+    ${CMAKE_SOURCE_DIR}/third_party/tjpgd/tjpgd.c
 )
 
 target_link_libraries(master PRIVATE

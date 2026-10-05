@@ -204,7 +204,13 @@ def test_display_roundtrip_and_tft_validation():
     rows = g.default_rows()
     assert rows[g.PLAYER_SECTION]["display"] == "oled"  # default
 
+    # display = tft forces flash_cache on too (see rows_from_settings()'s own
+    # comment -- mirrors player_config_flash_cache_enabled() in the real
+    # firmware), so a row dict claiming tft must also claim flash_cache for
+    # a round-trip through generate_ini()/parse_ini()/rows_from_settings()
+    # to come back equal.
     rows[g.PLAYER_SECTION]["display"] = "tft"
+    rows[g.PLAYER_SECTION]["flash_cache"] = True
     s, notes = g.parse_ini(g.generate_ini(rows))
     assert notes == []
     assert g.rows_from_settings(s) == rows
@@ -219,11 +225,18 @@ def test_display_roundtrip_and_tft_validation():
     # the default ("oled") writes no line at all
     assert "display" not in g.generate_ini(g.default_rows())
 
-    # display = tft reserves its 3 GPIOs dynamically, and nudges towards
-    # flash_cache = yes (a warning, not an error -- it's still safe without it)
-    tft_rows = {**g.default_rows(), g.PLAYER_SECTION: {**g.default_rows()[g.PLAYER_SECTION], "display": "tft"}}
+    # display = tft WITHOUT an explicit flash_cache = yes in the file still
+    # comes back forced on (the firmware forces it regardless -- nothing for
+    # the user to fix, so no warning either).
+    s4, notes4 = g.parse_ini("[player]\ndisplay = tft\n")
+    assert notes4 == []
+    assert g.rows_from_settings(s4)[g.PLAYER_SECTION]["flash_cache"] is True
+
+    # display = tft reserves its 3 GPIOs dynamically
+    tft_rows = {**g.default_rows(),
+                g.PLAYER_SECTION: {**g.default_rows()[g.PLAYER_SECTION], "display": "tft", "flash_cache": True}}
     e, w = g.validate(tft_rows)
-    assert e == [] and any("flash_cache = yes is recommended" in x for x in w)
+    assert e == [] and not any("flash_cache" in x for x in w)  # nothing left to warn about
 
     tft_rows["scc"] = {"enabled": True, "cs": g.TFT_CS_GPIO, "gap": None, "volume": None}
     e, w = g.validate(tft_rows)

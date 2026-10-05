@@ -60,17 +60,32 @@ typedef struct {
     void (*text)(uint8_t x, uint8_t page, const char *s);
     bool (*show)(void);
     uint32_t redraw_ms;   // core1_main()'s per-frame wait -- see below
+    uint8_t text_page_offset; // added to every page passed to .text() -- 0 for
+                              // the OLED (uses its whole screen); for the TFT,
+                              // shifts the same 8-page text layout down past
+                              // st7735.h's COVER_AREA_H so cover_image.c's
+                              // once-per-folder image has the rows above it
+                              // (see text_at() below).
 } display_backend_t;
 
 static void oled_i2c_bring_up(void); // defined below, near the ssd1306 init wrapper
 
+// Set once, from oled_ui_init()'s own argument, before core1 (which actually
+// calls backend_st7735_init(), via s_backend->init()) is launched -- see
+// st7735_init()'s doc comment on why this must be accurate (SPI0 must NOT be
+// re-initialized here when the SD card driver already brought it up first).
+static bool s_sd_spi0_ready = false;
+
 static bool backend_ssd1306_init(void) { return ssd1306_init(OLED_I2C, OLED_ADDR); }
-static bool backend_st7735_init(void) { return st7735_init(spi0, TFT_CS_GPIO, TFT_DC_GPIO, TFT_RST_GPIO); }
+static bool backend_st7735_init(void) {
+    return st7735_init(spi0, TFT_CS_GPIO, TFT_DC_GPIO, TFT_RST_GPIO, s_sd_spi0_ready);
+}
 
 static const display_backend_t BACKEND_SSD1306 = {
     .init = backend_ssd1306_init, .recover = oled_i2c_bring_up,
     .clear = ssd1306_clear, .text = ssd1306_text, .show = ssd1306_show,
     .redraw_ms = 150, // I2C0 is never shared with anything -- no reason to go slower
+    .text_page_offset = 0,
 };
 // Deliberately much slower than the OLED's 150ms (2026-10-02 finding):
 // frequent SPI0 traffic from the TFT was causing the SD card to see
@@ -88,7 +103,11 @@ static const display_backend_t BACKEND_ST7735 = {
     .init = backend_st7735_init, .recover = NULL,
     .clear = st7735_clear, .text = st7735_text, .show = st7735_show,
     .redraw_ms = 500,
+    .text_page_offset = COVER_AREA_H / 8, // 12 -- see cover_image.h
 };
+
+_Static_assert(COVER_AREA_H % 8 == 0,
+               "text_page_offset assumes COVER_AREA_H is a whole number of 8px pages");
 
 static const display_backend_t *s_backend = &BACKEND_SSD1306; // set in oled_ui_init()
 
@@ -175,6 +194,14 @@ static const char *CHIP_LABEL[VGM_CHIP_COUNT] = {
     [VGM_CHIP_SN76489_2] = "SN76489#2",
 };
 
+// Applies the current backend's text_page_offset -- every text draw in this
+// file goes through this instead of calling s_backend->text() directly, so
+// the 8-page layout below is written relative to "page 0 = top of the text
+// area" regardless of which backend (and therefore which offset) is active.
+static void text_at(uint8_t x, uint8_t page, const char *s) {
+    s_backend->text(x, page + s_backend->text_page_offset, s);
+}
+
 // Split `s` across two page rows of SSD1306_COLS_PER_LINE (21) chars. The
 // second row gets a trailing ".." if the string is longer than both rows.
 static void draw_wrapped(const char *s, uint8_t page0) {
@@ -191,8 +218,8 @@ static void draw_wrapped(const char *s, uint8_t page0) {
     } else {
         snprintf(l1, sizeof(l1), "%.*s..", (int)(w - 2), s + w);
     }
-    s_backend->text(0, page0, l0);
-    s_backend->text(0, page0 + 1, l1);
+    text_at(0, page0, l0);
+    text_at(0, page0 + 1, l1);
 }
 
 static void draw_chips(uint32_t mask, uint8_t page0) {
@@ -201,7 +228,7 @@ static void draw_chips(uint32_t mask, uint8_t page0) {
     size_t len = 0;
 
     if (mask == 0) {
-        s_backend->text(0, page0, "detecting...");
+        text_at(0, page0, "detecting...");
         return;
     }
     for (int c = 0; c < VGM_CHIP_COUNT; c++) {
@@ -221,8 +248,8 @@ static void draw_chips(uint32_t mask, uint8_t page0) {
         strcat(line[row], name);
         len += strlen(name);
     }
-    s_backend->text(0, page0, line[0]);
-    s_backend->text(0, page0 + 1, line[1]);
+    text_at(0, page0, line[0]);
+    text_at(0, page0 + 1, line[1]);
 }
 
 // Returns false if the framebuffer push to the panel failed.
@@ -234,8 +261,8 @@ static bool render(ui_mode_t mode, const char *text, uint32_t chip_mask, uint32_
         // (21), so it's split at the word boundary across two pages instead
         // of relying on draw_wrapped()'s blind char-count cut (which would
         // strand a lone "a" on the second line).
-        s_backend->text(0, 0, "PicoChiptune");
-        s_backend->text(0, 1, "Orchestra");
+        text_at(0, 0, "PicoChiptune");
+        text_at(0, 1, "Orchestra");
         draw_wrapped(text, 3);
         return s_backend->show();
     }
@@ -246,9 +273,9 @@ static bool render(ui_mode_t mode, const char *text, uint32_t chip_mask, uint32_
     char t[16];
     snprintf(t, sizeof(t), "Time  %02u:%02u",
              (unsigned)(elapsed_s / 60), (unsigned)(elapsed_s % 60));
-    s_backend->text(0, 3, t);              // elapsed, page 3
+    text_at(0, 3, t);              // elapsed, page 3
 
-    s_backend->text(0, 5, "Chips:");       // page 5
+    text_at(0, 5, "Chips:");       // page 5
     draw_chips(chip_mask, 6);              // pages 6-7
     return s_backend->show();
 }
@@ -357,10 +384,11 @@ static void oled_i2c_bring_up(void) {
     gpio_pull_up(OLED_SCL_PIN);
 }
 
-void oled_ui_init(void) {
+void oled_ui_init(bool sd_spi0_ready) {
     critical_section_init(&s_cs);
     s_enabled = true; // record song/status from now on even if the panel is
                       // slow to appear -- core1 draws it once it's up.
+    s_sd_spi0_ready = sd_spi0_ready; // read by backend_st7735_init() on core1, below
 
     if (player_config_display_is_tft()) {
         s_backend = &BACKEND_ST7735;
@@ -370,6 +398,24 @@ void oled_ui_init(void) {
     } else {
         s_backend = &BACKEND_SSD1306;
         oled_i2c_bring_up();
+        // Defensive (2026-10-04, FR_DISK_ERR investigation): display = oled
+        // never otherwise touches TFT_CS_GPIO at all -- st7735_init() simply
+        // never runs -- so if an ST7735 module happens to still be
+        // physically wired to the shared SPI0 bus (e.g. while diagnosing
+        // whether a problem is TFT-related by switching back to oled in
+        // vgmplay.ini without physically unplugging the panel), its CS pin
+        // is left floating. A floating CS on a chip that's still listening
+        // to the shared SCK/MOSI could, depending on what it floats to,
+        // make it think it's selected and start clocking in every SD
+        // transaction alongside the SD card's own CS -- harmless to SD
+        // reads on its own (TFT's MISO is unconnected, so it can't drive
+        // data back), but it is one more unknown on a bus already known to
+        // be sensitive (see docs/circuit.md 1.1b), so pin it high
+        // (deselected) here rather than leave it floating whenever a TFT
+        // isn't the active backend.
+        gpio_init(TFT_CS_GPIO);
+        gpio_set_dir(TFT_CS_GPIO, GPIO_OUT);
+        gpio_put(TFT_CS_GPIO, 1);
         printf("display: OLED (SSD1306) -- I2C0 up (GPIO0 SDA / GPIO1 SCL), "
                "core1 render loop started\n");
     }

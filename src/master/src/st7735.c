@@ -95,7 +95,8 @@ static void cmd_data(uint8_t c, const uint8_t *buf, size_t len) {
 #define ST_NORON   0x13
 #define ST_DISPON  0x29
 
-bool st7735_init(spi_inst_t *spi, uint cs_gpio, uint dc_gpio, uint rst_gpio) {
+bool st7735_init(spi_inst_t *spi, uint cs_gpio, uint dc_gpio, uint rst_gpio,
+                  bool spi0_already_configured) {
     s_spi = spi;
     s_cs_gpio = cs_gpio;
     s_dc_gpio = dc_gpio;
@@ -104,29 +105,36 @@ bool st7735_init(spi_inst_t *spi, uint cs_gpio, uint dc_gpio, uint rst_gpio) {
     gpio_init(dc_gpio); gpio_set_dir(dc_gpio, GPIO_OUT); gpio_put(dc_gpio, 1);
     gpio_init(rst_gpio); gpio_set_dir(rst_gpio, GPIO_OUT);
 
-    // spi_init() is safe to call even if the SD card driver already brought
-    // SPI0 up first (main.c orders [player] display's oled_ui_init() after
-    // SD mount+config load) -- same baud/format either way, see
-    // ST7735_SPI_BAUD_HZ's comment, so re-asserting it here is a harmless
-    // no-op in that case and self-sufficient if SD mount failed instead.
-    //
-    // spi_init()/spi_set_format() only configure the SPI0 PERIPHERAL --
-    // they do NOT route SCK/MOSI's GPIO pins to it. In the integrated
-    // firmware this went unnoticed because the SD card driver (FatFs_SPI/
-    // sd_driver/spi.c's gpio_set_function() calls, run via sd_init_driver()
-    // before oled_ui_init() -- see main.c's boot order) had always already
-    // done it first. A from-scratch build with no SD card at all
-    // (tools/st7735_text_test/) has nothing to rely on, so the panel never
-    // saw a clock or any data -- every command below "succeeded" (this
-    // panel can't ACK either way) while nothing reached the wire. Doing it
-    // here too makes this function correct on its own regardless of
-    // whether anything else has touched SPI0 first.
-    spi0_bus_lock();
-    spi_init(s_spi, ST7735_SPI_BAUD_HZ);
-    spi_set_format(s_spi, 8, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);
-    gpio_set_function(TFT_SPI0_SCK_GPIO, GPIO_FUNC_SPI);
-    gpio_set_function(TFT_SPI0_MOSI_GPIO, GPIO_FUNC_SPI);
-    spi0_bus_unlock();
+    // spi_init()/spi_set_format() only configure the SPI0 PERIPHERAL -- they
+    // do NOT route SCK/MOSI's GPIO pins to it, so a from-scratch build with
+    // no SD card at all (tools/st7735_text_test/) needs this to bring SPI0
+    // up from nothing (pass spi0_already_configured = false there). But when
+    // the SD card driver has ALREADY brought SPI0 up first (main.c orders
+    // [player] display's oled_ui_init() after SD mount+config load -- always
+    // true in the shipped firmware), this whole block must be SKIPPED, not
+    // just redundant: spi_init() resets the SPI0 PERIPHERAL BLOCK itself
+    // (pico-sdk's reset_block_num()/unreset_block_num_wait_blocking()),
+    // which can glitch the now-shared SCK/MOSI lines. Hit in the field
+    // (2026-10-02): this glitch, landing right after the SD card's own last
+    // transaction (main()'s ini file read, moments earlier), reproduced the
+    // "MMC/SDC keeps listening to SCLK/DI even once deselected" quirk
+    // documented in sd_spi.c's sd_spi_deselect() comment -- wedging the SD
+    // card before its very first real directory listing, on literally every
+    // boot (deterministic, not a race -- this call always runs exactly once,
+    // right here, regardless of any SPI0-arbitration locking elsewhere).
+    // The register VALUES this leaves behind are identical either way (same
+    // baud/format as the SD driver's own, see ST7735_SPI_BAUD_HZ's comment),
+    // which is why this was previously assumed a harmless no-op -- the
+    // RESET ITSELF, not the end state, was the actual hazard. See
+    // docs/design-notes.md for the full diagnostic trail.
+    if (!spi0_already_configured) {
+        spi0_bus_lock();
+        spi_init(s_spi, ST7735_SPI_BAUD_HZ);
+        spi_set_format(s_spi, 8, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);
+        gpio_set_function(TFT_SPI0_SCK_GPIO, GPIO_FUNC_SPI);
+        gpio_set_function(TFT_SPI0_MOSI_GPIO, GPIO_FUNC_SPI);
+        spi0_bus_unlock();
+    }
 
     // Hardware reset: the datasheet wants RST held low >=10us then high, and
     // >=120ms before the first command after that (SWRESET below needs the
@@ -174,7 +182,24 @@ bool st7735_init(spi_inst_t *spi, uint cs_gpio, uint dc_gpio, uint rst_gpio) {
 // --- framebuffer -------------------------------------------------------------
 
 void st7735_clear(void) {
-    for (size_t i = 0; i < ST7735_W * ST7735_H; i++) s_fb[i] = COLOR_BG;
+    for (size_t i = COVER_AREA_H * ST7735_W; i < (size_t)ST7735_W * ST7735_H; i++)
+        s_fb[i] = COLOR_BG;
+}
+
+void st7735_cover_clear(void) {
+    for (size_t i = 0; i < (size_t)COVER_AREA_W * COVER_AREA_H; i++) s_fb[i] = COLOR_BG;
+}
+
+void st7735_cover_blit(int x, int y, int w, int h, const uint16_t *pixels) {
+    for (int row = 0; row < h; row++) {
+        int dy = y + row;
+        if (dy < 0 || dy >= COVER_AREA_H) continue;
+        for (int col = 0; col < w; col++) {
+            int dx = x + col;
+            if (dx < 0 || dx >= COVER_AREA_W) continue;
+            s_fb[dy * ST7735_W + dx] = pixels[row * w + col];
+        }
+    }
 }
 
 void st7735_text(uint8_t x, uint8_t page, const char *s) {

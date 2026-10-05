@@ -13,10 +13,11 @@ advancing to the next file, the opt-in flash-cache mode (copy each song
 into onboard flash before playing it, freeing the SD card's SPI bus for the
 rest of that song), and which status display to drive (the default SSD1306
 OLED, or an ST7735 SPI TFT -- picking tft also dynamically reserves its 3
-GPIOs in the collision checks below, and warns if flash_cache isn't also
-on). See [docs/circuit.md 1.2](../../docs/circuit.md) and
-[docs/design-notes.md](../../docs/design-notes.md) for the flash-cache/TFT
-design tradeoffs.
+GPIOs in the collision checks below, and forces flash_cache on in the
+generated file regardless of its own checkbox, matching the firmware, which
+forces it the same way). See [docs/circuit.md 1.2](../../docs/circuit.md)
+and [docs/design-notes.md](../../docs/design-notes.md) for the flash-cache/
+TFT design tradeoffs.
 
 ## Run
 

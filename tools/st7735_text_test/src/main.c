@@ -47,7 +47,7 @@ int main(void) {
     // initialized before st7735_init() takes it for the first time.
     spi0_bus_lock_init();
 
-    st7735_init(spi0, TFT_CS_GPIO, TFT_DC_GPIO, TFT_RST_GPIO);
+    st7735_init(spi0, TFT_CS_GPIO, TFT_DC_GPIO, TFT_RST_GPIO, false); // no SD card here -- bring SPI0 up from scratch
     printf("st7735_init() done. It always \"succeeds\" -- this panel can't ACK "
            "back over SPI (see st7735_init()'s doc comment) -- so watch the "
            "panel itself, not this return value, to judge the result.\n");

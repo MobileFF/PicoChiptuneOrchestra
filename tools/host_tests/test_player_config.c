@@ -144,6 +144,13 @@ int main(void) {
     CHK(n10 == 0);
     CHK(player_config_loop_count() == 1); // unchanged from n9 above
 
+    // The main cfg block above already set display = tft, which (see below)
+    // forces flash_cache_enabled() on regardless of the flash_cache/cache
+    // key -- neutralize that first so these alias/rejection checks are
+    // actually exercising the flash_cache key's OWN on/off state.
+    int n11a = player_config_apply("[player]\ndisplay = oled\n");
+    CHK(n11a == 1);
+
     // flash_cache aliases + rejection of a bad boolean
     int n11 = player_config_apply("[player]\nflashcache = on\n");
     CHK(n11 == 1);
@@ -165,6 +172,20 @@ int main(void) {
     int n16 = player_config_apply("[player]\ndisplay = lcd\n"); // bad value -> rejected
     CHK(n16 == 0);
     CHK(player_config_display_is_tft() == false); // unchanged from n15 above
+
+    // display = tft forces flash_cache on regardless of the ini's own
+    // flash_cache setting -- see player_config_flash_cache_enabled()'s own
+    // comment (streaming SD reads for a whole song would otherwise contend
+    // with the TFT's periodic redraw for that whole song, not just the
+    // brief windows the rest of the codebase bounds this risk for). n12
+    // above already left flash_cache's OWN setting at "no".
+    CHK(player_config_flash_cache_enabled() == false); // still oled (n15) + cache=no (n12)
+    int n17 = player_config_apply("[player]\ndisplay = tft\n");
+    CHK(n17 == 1);
+    CHK(player_config_flash_cache_enabled() == true); // forced on by display=tft...
+    int n18 = player_config_apply("[player]\ndisplay = oled\n");
+    CHK(n18 == 1);
+    CHK(player_config_flash_cache_enabled() == false); // ...and released once back to oled
 
     printf("applied=%d\n", n);
     printf(fail ? "FAILED\n" : "ok\n");

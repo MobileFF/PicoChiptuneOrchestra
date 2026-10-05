@@ -45,7 +45,15 @@ uint32_t player_config_preview_seconds(void) { return s_preview_seconds; }
 bool player_config_recursive_enabled(void) { return s_recursive_enabled; }
 uint8_t player_config_loop_count(void) { return s_loop_count; }
 const char *player_config_root_dir(void) { return s_root_dir; }
-bool player_config_flash_cache_enabled(void) { return s_flash_cache_enabled; }
+// display = tft forces this on regardless of the ini's own flash_cache
+// setting: TFT streaming VGM straight off the SD card for a whole song
+// means continuous SD reads contending with core1's periodic TFT redraw for
+// the whole song, not just the brief windows flash_disk_cache_file() (and
+// main.c's/cover_image.c's own multicore_lockout wrapping) was built to
+// bound -- see docs/design-notes.md's TFT writeup. Forcing it here, in the
+// one place every caller already reads this through, means it can't be
+// forgotten/misconfigured in vgmplay.ini.
+bool player_config_flash_cache_enabled(void) { return s_flash_cache_enabled || s_display_is_tft; }
 bool player_config_display_is_tft(void) { return s_display_is_tft; }
 
 static int lookup_chip(const char *raw) {
@@ -229,16 +237,45 @@ int player_config_apply(const char *text) {
     return applied;
 }
 
+// core0's stack is a mere 2KB (see docs/design-notes.md's HardFault
+// writeup/main.c's visit_dir() comment for the established pattern this
+// follows). FIL/DIR/FILINFO are all much bigger than they look -- FatFs is
+// built with FF_FS_TINY=0 (FIL embeds a 512-byte FF_MAX_SS sector buffer)
+// and FF_USE_LFN!=0 (FILINFO embeds a 256-byte long-filename buffer) -- so
+// these, plus `pick`/`path` below, were previously plain locals of
+// player_config_load()/player_config_autoload()/player_config_apply(),
+// three functions that call into each other (main() -> autoload() ->
+// load() -> apply()), stacking all of their frames at once. Measured with
+// `-fstack-usage` (2026-10-03): autoload() alone was 1528 bytes, load() 648,
+// apply() 184 -- 2360 bytes of nested frames before counting main()'s own or
+// any call/return overhead, comfortably over the 2KB budget. The overflow
+// silently clobbered whatever static variable happened to sit just past
+// core0's stack region -- in the field this landed on s_display_is_tft,
+// making vgmplay.ini look like it contained "display = tft" (and therefore
+// forcing flash_cache on too) on every single boot even with no such key
+// anywhere in the file, which in turn made every directory listing fail
+// with FR_DISK_ERR from the TFT/SD SPI0-sharing bugs those settings enable
+// -- despite [player] display never actually being set. None of this was a
+// SPI0/display bug at all; every fix attempted at that layer necessarily
+// did nothing. `static` here (never reentrant or concurrent: this whole
+// call chain runs once, on core0, before core1 is even launched) moves
+// these out of the stack entirely, the same fix already applied to
+// main.c's visit_dir() for the identical reason.
+static FIL s_cfg_file;
+static DIR s_cfg_dir;
+static FILINFO s_cfg_info;
+static char s_cfg_pick[256]; // matches FILINFO.fname when long filenames are enabled
+static char s_cfg_path[4 + sizeof(s_cfg_pick)];
+
 int player_config_load(const char *path) {
-    FIL f;
-    if (f_open(&f, path, FA_READ) != FR_OK) {
+    if (f_open(&s_cfg_file, path, FA_READ) != FR_OK) {
         printf("config: no %s on card, using built-in defaults\n", path);
         return 0;
     }
     static char buf[4096];
     UINT br = 0;
-    FRESULT fr = f_read(&f, buf, sizeof(buf) - 1, &br);
-    f_close(&f);
+    FRESULT fr = f_read(&s_cfg_file, buf, sizeof(buf) - 1, &br);
+    f_close(&s_cfg_file);
     if (fr != FR_OK) {
         printf("config: read error on %s, using built-in defaults\n", path);
         return 0;
@@ -264,9 +301,8 @@ static bool ci_ends_with(const char *name, const char *suffix) {
 
 int player_config_autoload(void) {
     // Preferred exact name.
-    FIL probe;
-    if (f_open(&probe, "0:/vgmplay.ini", FA_READ) == FR_OK) {
-        f_close(&probe);
+    if (f_open(&s_cfg_file, "0:/vgmplay.ini", FA_READ) == FR_OK) {
+        f_close(&s_cfg_file);
         return player_config_load("0:/vgmplay.ini");
     }
 
@@ -274,29 +310,25 @@ int player_config_autoload(void) {
     // card can carry e.g. "vgmplay_scc.ini" and it's obvious at a glance
     // which chip set that card is wired for. Sorted (not raw dir order) so
     // the choice is deterministic when several are present.
-    DIR dir;
-    FILINFO info;
-    char pick[256]; // matches FILINFO.fname when long filenames are enabled
-    pick[0] = '\0';
-    if (f_findfirst(&dir, &info, "0:", "*") == FR_OK) {
-        while (info.fname[0]) {
-            if (!(info.fattrib & AM_DIR) &&
-                strncasecmp(info.fname, "vgmplay", 7) == 0 &&
-                ci_ends_with(info.fname, ".ini") &&
-                (pick[0] == '\0' || strcasecmp(info.fname, pick) < 0)) {
-                snprintf(pick, sizeof(pick), "%s", info.fname);
+    s_cfg_pick[0] = '\0';
+    if (f_findfirst(&s_cfg_dir, &s_cfg_info, "0:", "*") == FR_OK) {
+        while (s_cfg_info.fname[0]) {
+            if (!(s_cfg_info.fattrib & AM_DIR) &&
+                strncasecmp(s_cfg_info.fname, "vgmplay", 7) == 0 &&
+                ci_ends_with(s_cfg_info.fname, ".ini") &&
+                (s_cfg_pick[0] == '\0' || strcasecmp(s_cfg_info.fname, s_cfg_pick) < 0)) {
+                snprintf(s_cfg_pick, sizeof(s_cfg_pick), "%s", s_cfg_info.fname);
             }
-            if (f_findnext(&dir, &info) != FR_OK) break;
+            if (f_findnext(&s_cfg_dir, &s_cfg_info) != FR_OK) break;
         }
-        f_closedir(&dir);
+        f_closedir(&s_cfg_dir);
     }
 
-    if (pick[0] == '\0') {
+    if (s_cfg_pick[0] == '\0') {
         printf("config: no vgmplay*.ini on card, using built-in defaults\n");
         return 0;
     }
-    char path[4 + sizeof(pick)];
-    snprintf(path, sizeof(path), "0:/%s", pick);
-    printf("config: vgmplay.ini not found; using %s\n", pick);
-    return player_config_load(path);
+    snprintf(s_cfg_path, sizeof(s_cfg_path), "0:/%s", s_cfg_pick);
+    printf("config: vgmplay.ini not found; using %s\n", s_cfg_pick);
+    return player_config_load(s_cfg_path);
 }

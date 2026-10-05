@@ -7,6 +7,7 @@
 #include "hardware/flash.h"
 #include "hardware/sync.h"
 #include "pico/multicore.h"
+#include "spi0_bus_lock.h"
 
 #ifndef PICO_FLASH_SIZE_BYTES
 #define PICO_FLASH_SIZE_BYTES (2 * 1024 * 1024) // genuine Pico's onboard flash
@@ -62,6 +63,26 @@ DRESULT flash_disk_diskio_write(const BYTE *buff, LBA_t sector, UINT count) {
     // running oled_ui.c's render loop straight out of flash, so it must be
     // parked first (see multicore_lockout_victim_init() in oled_ui.c's
     // core1_main()) or it hangs/faults mid-fetch the instant erase starts.
+    //
+    // multicore_lockout's pause is an asynchronous inter-core interrupt that
+    // can land on core1 at ANY instruction -- including mid-byte inside
+    // st7735.c's spi_write_blocking() calls, after it already took
+    // spi0_bus_lock() but before spi0_bus_unlock() runs (display = tft
+    // only). That leaves the TFT's CS asserted and the mutex permanently
+    // held by a now-parked core1 for the whole flash write: a bad SPI0 bus
+    // state sd_spi.c's sd_spi_deselect() comment warns the SD card may never
+    // recover from on its own, until power-cycled. Hit in the field
+    // (2026-10-02): f_mkfs()'s very first format of the "1:" flash volume at
+    // boot, which writes many sectors through here, corrupted the SD card
+    // bus before main()'s very first directory listing ever ran, and every
+    // [player] flash_cache song-copy afterwards (forced on whenever
+    // display = tft -- see player_config.c) reproduced it just as easily.
+    // Taking the real spi0_bus_lock() FIRST removes the gap: by the time
+    // this holds it, core1 is guaranteed to be either idle or already
+    // blocked waiting on this same mutex (parked in mutex_enter_blocking's
+    // WFE wait, not mid-transfer), so the lockout interrupt can only ever
+    // land at a safe point.
+    spi0_bus_lock();
     multicore_lockout_start_blocking();
     uint32_t irq = save_and_disable_interrupts();
     for (uint32_t blk = blk_start; blk < blk_end; blk += FLASH_SECTOR_SIZE) {
@@ -78,6 +99,7 @@ DRESULT flash_disk_diskio_write(const BYTE *buff, LBA_t sector, UINT count) {
     }
     restore_interrupts(irq);
     multicore_lockout_end_blocking();
+    spi0_bus_unlock();
     return RES_OK;
 }
 

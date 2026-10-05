@@ -22,7 +22,11 @@
 // on GPIO0/1; see player_config_display_is_tft()) and, once it's up, launch
 // core1's render loop. Call once, after stdio, slave_bus init, and
 // player_config_autoload() (the display choice has to be known already).
-void oled_ui_init(void);
+//
+// `sd_spi0_ready`: pass whether f_mount("0:") already succeeded (tft only --
+// ignored for oled, which is on a separate I2C0 peripheral). Forwarded to
+// st7735_init() -- see its doc comment for why this must be accurate.
+void oled_ui_init(bool sd_spi0_ready);
 
 // Diagnostics the core1 render loop records instead of printf-ing (it must
 // not -- see oled_ui.c). core0 can log these. answered = the panel ACKed at

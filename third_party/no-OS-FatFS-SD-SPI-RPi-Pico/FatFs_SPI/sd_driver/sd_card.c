@@ -479,6 +479,26 @@ static int sd_cmd(sd_card_t *pSD, const cmdSupported cmd, uint32_t arg,
             DBG_PRINTF("No response CMD:%d\r\n", cmd);
             continue;
         }
+        // PicoChiptuneOrchestra change (2026-10-05): also retry on "illegal
+        // command" (upstream only retried on no-response at all). Hit in
+        // the field, reproduced on two different SD cards: the SAME sector
+        // read successfully several times during boot, then came back
+        // R1_ILLEGAL_COMMAND on the very first read after a ~2s+ idle gap
+        // on this SPI bus (no other traffic at all -- not a TFT/bus-sharing
+        // issue, see docs/design-notes.md), and then failed identically on
+        // every subsequent attempt for the rest of the session. This looks
+        // like some cards misreading the first command byte after an
+        // extended idle period with no SCK activity, landing on a
+        // genuinely different (and genuinely unsupported) command number --
+        // not a real, persistent "this command is unsupported" condition.
+        // Retrying immediately re-sends the SAME bytes while the bus is
+        // already active/synced, which should clear a one-off misread
+        // without masking a truly unsupported command (that still returns
+        // illegal on every retry, same as before, just a few retries later).
+        if (response & R1_ILLEGAL_COMMAND) {
+            DBG_PRINTF("Illegal command CMD:%d, retrying\r\n", cmd);
+            continue;
+        }
         break;
     }
     // Pass the response to the command call if required

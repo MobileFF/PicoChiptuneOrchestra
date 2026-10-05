@@ -108,8 +108,11 @@ SDカードのルート直下に`.vgm`/`.vgz`ファイルを置けば、ファ�
 アイドルになります(既定no。SPI接続の追加ディスプレイ用にSDカードのSPIバスを空けておくための
 機能で、詳細は[docs/design-notes.md](docs/design-notes.md)参照)。ステータス表示は既定で
 SSD1306(I2C)ですが、`display = tft`にするとSPI接続のST7735に切り替えられます
-(SDカードとSPIバスを共有するため`flash_cache = yes`との併用推奨。配線は
-[docs/circuit.md 1.1b](docs/circuit.md)参照)。`vgmplay.ini`で
+(SDカードとSPIバスを共有するため`flash_cache`は設定に関わらず自動的に有効になります。
+配線は[docs/circuit.md 1.1b](docs/circuit.md)参照)。`display = tft`のときは、VGMと
+同じフォルダに`.jpg`/`.jpeg`/`.png`(パレット形式PNG、1/2/4bit/pixelの詰め込みも対応)を
+1枚置いておくとフォルダに入った時に画面上部へ縮小表示します
+([docs/circuit.md 1.1c](docs/circuit.md)参照)。`vgmplay.ini`で
 `enabled = no`にした(またはスレーブ自体を用意していない)チップを使う曲は、そのパートが欠けた
 まま鳴らすのではなく**曲ごとスキップ**します。GPIO2(→GND、`[player] skip_button`で変更可)が
 スキップボタンです。masterの動作ログは書き込み用USBケーブルをそのまま
@@ -153,8 +156,9 @@ YM2151ほか3チップのPico 2移行など)は[docs/design-notes.md](docs/desig
 
 このプロジェクト自身のコードは [MIT License](LICENSE) です。`third_party/` に同梱している
 依存コード(ymfm: BSD-3-Clause、no-OS-FatFS-SD-SPI-RPi-Pico: Apache-2.0/FatFsライセンス、
-miniz_tinfl: MIT相当)はそれぞれのディレクトリ内の `LICENSE` に従います。いずれも寛容な
-ライセンスで、本プロジェクトの MIT ライセンスと衝突しません。
+miniz_tinfl: MIT相当、tjpgd: 独自の寛容ライセンス(ChaN氏、FatFsと同作者))はそれぞれの
+ディレクトリ内の `LICENSE` に従います。いずれも寛容なライセンスで、本プロジェクトの
+MIT ライセンスと衝突しません。
 
 `tools/offline_render/vendor/`(Nuked-OPM, LGPL-2.1)はホスト側の比較検証専用で、ビルド成果物
 (`src/`・`firmware/`)には一切リンクされておらず、リポジトリにも含まれません

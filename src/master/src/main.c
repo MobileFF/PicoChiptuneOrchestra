@@ -27,6 +27,7 @@
 #include "player_config.h"
 #include "flash_disk.h"
 #include "spi0_bus_lock.h"
+#include "cover_image.h"
 
 #define PIN_BTN_SKIP 2 // to GND; internal pull-up enabled -- built-in default,
                         // overridable via vgmplay.ini's [player] skip_button
@@ -164,6 +165,15 @@ static FILINFO s_scan_info;
 static int s_played_this_pass;
 static int s_found_this_pass; // total playable files seen across every folder visited this pass
 
+// [player] display = tft's once-per-folder cover image (cover_image.h):
+// the alphabetically-first .jpg/.jpeg/.png found directly in a folder,
+// tracked per recursion depth same as s_dir_path/s_subdir_names above --
+// NOT a plain local in visit_dir(), for the same core0-stack reason (a
+// DIR_PATH_BUF_SZ+256 buffer per recursion level, up to MAX_RECURSE_DEPTH
+// deep, would eat a large fraction of core0's 2KB budget).
+static char s_cover_name[MAX_RECURSE_DEPTH + 1][256]; // "" = none found this folder
+static char s_cover_path[MAX_RECURSE_DEPTH + 1][DIR_PATH_BUF_SZ + 256];
+
 // A subdirectory worth descending into for [player] recursive -- real
 // directories only, and not one of the OS-junk folders (e.g. Windows'
 // "System Volume Information") that tend to appear on an SD card that's ever
@@ -191,9 +201,38 @@ static void visit_dir(int depth) {
     size_t names_used = 0;
     int nsubdirs = 0;
     size_t subdir_names_used = 0;
+    s_cover_name[depth][0] = '\0';
 
+    // f_findfirst()/f_findnext() each do their own separate SD transaction
+    // (disk_read() call), with spi0_bus_lock.h's mutex released in the gaps
+    // between them -- a folder with many entries means many such gaps for
+    // core1's periodic TFT redraw to land in. Hit in the field (2026-10-02):
+    // an SD card that doesn't fully let go of the shared SPI0 bus between
+    // its own transactions (see sd_spi.c's sd_spi_deselect() comment) got
+    // left in a bad state by this and never recovered -- every later
+    // directory listing failed with FR_DISK_ERR for the rest of the session.
+    //
+    // First fix tried here was multicore_lockout_start/end_blocking()
+    // (parking core1 entirely for the whole scan) -- it did NOT help (still
+    // reproduced 2026-10-02, even on the very first "0:" listing of the
+    // session). Root cause turned out to be that fix itself, used the same
+    // way in flash_disk.c: multicore_lockout's pause is an asynchronous
+    // inter-core interrupt that can land on core1 at ANY instruction,
+    // including mid-byte inside st7735.c's spi_write_blocking() calls --
+    // after spi0_bus_lock() was already taken but before spi0_bus_unlock()
+    // runs. That leaves the TFT's CS asserted and spi0_bus_lock.h's mutex
+    // permanently held by a now-parked core1: exactly the bad bus state
+    // sd_spi.c's deselect comment warns never recovers on its own. Taking
+    // the real spi0_bus_lock() here instead has no such gap -- st7735.c
+    // already wraps every one of its own transactions in the SAME mutex, so
+    // holding it for this whole scan just makes core1 block cooperatively at
+    // its own next lock attempt (between transactions, never mid-transfer)
+    // until this scan releases it. See cover_image.c's decode loop for the
+    // identical reasoning and fix.
+    spi0_bus_lock();
     FRESULT fr = f_findfirst(&s_scan_dir, &s_scan_info, dir_path, "*");
     if (fr != FR_OK) {
+        spi0_bus_unlock();
         printf("WARNING: could not list directory %s (FatFs error %d), skipping it\n", dir_path, fr);
         return;
     }
@@ -218,14 +257,30 @@ static void visit_dir(int depth) {
                 s_name_off[nfiles++] = (uint16_t)names_used;
                 names_used += len;
             }
+        } else if (cover_image_is_supported(s_scan_info.fname) &&
+                   (s_cover_name[depth][0] == '\0' ||
+                    strcasecmp(s_scan_info.fname, s_cover_name[depth]) < 0)) {
+            // Alphabetically-first match wins (case-insensitive, matching
+            // FAT's own case-insensitivity) -- same tie-break rule as
+            // player_config_autoload()'s "vgmplay*.ini" picker.
+            snprintf(s_cover_name[depth], sizeof(s_cover_name[depth]), "%s", s_scan_info.fname);
         }
         if (f_findnext(&s_scan_dir, &s_scan_info) != FR_OK) break;
     }
     f_closedir(&s_scan_dir);
+    spi0_bus_unlock();
 
     if (nfiles > 0) {
         printf("%s: %d playable file(s)\n", dir_path, nfiles);
         s_found_this_pass += nfiles;
+        // Once per folder (not per song) -- see cover_image.h.
+        if (s_cover_name[depth][0]) {
+            snprintf(s_cover_path[depth], sizeof(s_cover_path[depth]), "%s/%s",
+                     dir_path, s_cover_name[depth]);
+            cover_image_show(s_cover_path[depth]);
+        } else {
+            cover_image_show(NULL);
+        }
         if (player_config_shuffle_enabled()) {
             shuffle_name_off(s_name_off, nfiles);
         } else {
@@ -352,6 +407,16 @@ int main(void) {
         sleep_ms(1000);
     }
 
+    // __DATE__/__TIME__ are this translation unit's own compile time, baked
+    // in at build time -- printed here (after the boot-delay wait above, not
+    // before) so it's always the first thing a freshly-attached terminal
+    // sees, letting "is this actually the firmware I just flashed?" be
+    // answered by eye instead of guessed at (bit us 2026-10-02: a stale
+    // .uf2 -- e.g. a Google Drive sync lag between this repo and the board
+    // being flashed -- can silently keep old [player] behaviour alive no
+    // matter how certain the SD card's vgmplay.ini looks).
+    printf("build: %s %s\n", __DATE__, __TIME__);
+
     // [player] display's oled_ui_init() (below) shares the master's
     // physical SPI0 bus with the SD card when display = tft -- see
     // spi0_bus_lock.h. Must be ready before ANY SPI0 access at all,
@@ -370,7 +435,7 @@ int main(void) {
     // fails, every setting keeps its default).
     player_config_autoload();
 
-    oled_ui_init(); // I2C0/SSD1306 or SPI0/ST7735 + core1 render loop, per [player] display
+    oled_ui_init(sd_mounted); // I2C0/SSD1306 or SPI0/ST7735 + core1 render loop, per [player] display
 
     // Only mount/format the flash-backed cache volume when it's actually
     // wanted -- no point in the (one-time) formatting flash wear otherwise.
@@ -379,6 +444,8 @@ int main(void) {
     // victim first -- see oled_ui_wait_for_core1_lockout_ready()'s doc
     // comment. 1s is generous; core1 does this as its very first instruction.
     if (player_config_flash_cache_enabled()) {
+        if (player_config_display_is_tft())
+            printf("flash cache: forced on by [player] display = tft (see player_config.c)\n");
         if (oled_ui_wait_for_core1_lockout_ready(1000)) {
             s_flash_cache_ready = flash_disk_init();
         } else {

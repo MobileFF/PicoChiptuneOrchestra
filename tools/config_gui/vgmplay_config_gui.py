@@ -259,6 +259,7 @@ def rows_from_settings(settings):
             "volume": s.get("volume", None),  # None -> use firmware default (100), no line written
         }
     p = settings.get(PLAYER_SECTION, {})
+    display = p.get("display", "oled")
     rows[PLAYER_SECTION] = {
         "shuffle": p.get("shuffle", False),
         "skip_button": p.get("skip_button", None),  # None -> firmware default GPIO2, no line written
@@ -267,8 +268,12 @@ def rows_from_settings(settings):
         "recursive": p.get("recursive", False),
         "root_dir": p.get("root_dir", ""),  # "" -> SD card root, no line written
         "loop_count": p.get("loop_count", None),  # None -> firmware default 2, no line written
-        "flash_cache": p.get("flash_cache", False),
-        "display": p.get("display", "oled"),
+        # display = tft forces this on at runtime regardless of the file's
+        # own flash_cache setting -- see player_config_flash_cache_enabled()'s
+        # comment in player_config.c -- so reflect that here too rather than
+        # showing a value the firmware will silently override.
+        "flash_cache": p.get("flash_cache", False) or display == "tft",
+        "display": display,
     }
     return rows
 
@@ -340,10 +345,12 @@ def validate(rows):
         reserved[TFT_CS_GPIO] = "TFT SPI0 CS"
         reserved[TFT_DC_GPIO] = "TFT DC"
         reserved[TFT_RST_GPIO] = "TFT RST"
-        if not rows[PLAYER_SECTION]["flash_cache"]:
-            warnings.append("display = tft without flash_cache = yes: every SD card read during "
-                             "playback will contend with the display for the shared SPI0 bus "
-                             "(safe, just slower/jankier redraws) -- flash_cache = yes is recommended")
+        # No warning needed here (unlike earlier revisions of this check):
+        # player_config_flash_cache_enabled() in the firmware now forces
+        # flash_cache on whenever display = tft regardless of this file's
+        # own flash_cache setting, and rows_from_settings() already reflects
+        # that forced value in rows[PLAYER_SECTION]["flash_cache"] -- there's
+        # nothing left for the user to fix.
 
     if rows[PLAYER_SECTION]["preview_seconds"] is not None:
         try:
@@ -609,7 +616,11 @@ def run_gui(initial_path=None):
             "recursive": bool(recursive_var.get()),
             "root_dir": normalize_root_dir(root_dir_var.get().strip()),
             "loop_count": (int(loopcnt) if re.fullmatch(r"\d+", loopcnt) else (None if loopcnt == "" else loopcnt)),
-            "flash_cache": bool(flash_cache_var.get()),
+            # display = tft forces this on at the firmware level regardless
+            # of the checkbox (see rows_from_settings()'s matching comment)
+            # -- OR it in here too so a saved file always says what will
+            # actually happen, even if the box itself was left unchecked.
+            "flash_cache": bool(flash_cache_var.get()) or display_var.get() == "tft",
             "display": display_var.get(),
         }
         return rows

@@ -2,6 +2,7 @@
 
 #include "ff.h"
 #include "miniz_tinfl.h"
+#include "inflate_scratch.h"
 
 bool vgz_looks_like_gzip(const char *path) {
     FIL f;
@@ -59,19 +60,24 @@ bool vgz_inflate_file(const char *src_path, const char *dst_path) {
         return false;
     }
 
-    static uint8_t s_dict[TINFL_LZ_DICT_SIZE];
+    // dict/decomp are the shared inflate_scratch.h instance, not private
+    // statics here, specifically so cover_image.c's PNG decoding can reuse
+    // the same ~40KB instead of needing its own copy -- see that header's
+    // comment. MUST be static storage either way: sizeof(tinfl_decompressor)
+    // is ~8 KB (three 1024-entry Huffman fast-lookup tables + trees).
+    // core0's stack is only 2 KB, so a stack-local here overflows it by
+    // ~6 KB -- straight down through SCRATCH_Y into SCRATCH_X, which holds
+    // *core1's* stack. That silently corrupted core1's OLED render loop
+    // mid-wait (a stacked return address got overwritten with Huffman table
+    // bytes -> HardFault on the next function return -> panel frozen on
+    // "starting..." while audio played on). vgz_inflate_file() only ever
+    // runs on core0's playlist loop and is never reentrant (nor concurrent
+    // with cover_image.c's own use of this same scratch -- see
+    // inflate_scratch.h), so one shared instance is fine.
+    uint8_t *s_dict = inflate_scratch_dict();
     static uint8_t s_in[1024];
-    // MUST be static: sizeof(tinfl_decompressor) is ~8 KB (three 1024-entry
-    // Huffman fast-lookup tables + trees). core0's stack is only 2 KB, so a
-    // stack-local here overflows it by ~6 KB -- straight down through
-    // SCRATCH_Y into SCRATCH_X, which holds *core1's* stack. That silently
-    // corrupted core1's OLED render loop mid-wait (a stacked return address
-    // got overwritten with Huffman table bytes -> HardFault on the next
-    // function return -> panel frozen on "starting..." while audio played
-    // on). vgz_inflate_file() only ever runs on core0's playlist loop and is
-    // never reentrant, so one shared instance is fine.
-    static tinfl_decompressor decomp;
-    tinfl_init(&decomp);
+    tinfl_decompressor *decomp = inflate_scratch_decomp();
+    tinfl_init(decomp);
 
     size_t in_avail = 0, in_pos = 0;
     bool src_eof = false;
@@ -91,7 +97,7 @@ bool vgz_inflate_file(const char *src_path, const char *dst_path) {
         size_t out_buf_size = TINFL_LZ_DICT_SIZE - dict_ofs;
         uint32_t flags = src_eof ? 0 : TINFL_FLAG_HAS_MORE_INPUT;
 
-        tinfl_status st = tinfl_decompress(&decomp, s_in + in_pos, &in_buf_size,
+        tinfl_status st = tinfl_decompress(decomp, s_in + in_pos, &in_buf_size,
                                             s_dict, s_dict + dict_ofs, &out_buf_size, flags);
         in_pos += in_buf_size;
 

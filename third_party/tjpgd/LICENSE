@@ -1,0 +1,16 @@
+TJpgDec - Tiny JPEG Decompressor R0.01c
+
+Copyright (C) 2019, ChaN, all right reserved.
+
+* The TJpgDec module is a free software and there is NO WARRANTY.
+* No restriction on use. You can use, modify and redistribute it for
+  personal, non-profit or commercial products UNDER YOUR RESPONSIBILITY.
+* Redistributions of source code must retain the above copyright notice.
+
+Source: https://elm-chan.org/fsw/tjpgd/ (same author as the FatFs library
+already vendored in this project, third_party/no-OS-FatFS-SD-SPI-RPi-Pico/).
+Fetched 2026-10-02 via the ms-rtos/tjpgd GitHub mirror
+(https://github.com/ms-rtos/tjpgd), byte-identical to R0.01c as distributed
+by elm-chan.org except one deliberate config change: tjpgd.h's JD_FORMAT is
+set to 1 (RGB565) instead of the stock 0 (RGB888) -- see the comment at that
+line.

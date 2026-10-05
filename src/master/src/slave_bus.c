@@ -221,6 +221,24 @@ void slave_bus_init(void) {
     spi_set_format(spi1, 8, SPI_CPOL_0, SPI_CPHA_1, SPI_MSB_FIRST);
     gpio_set_function(PIN_SPI1_SCK, GPIO_FUNC_SPI);
     gpio_set_function(PIN_SPI1_MOSI, GPIO_FUNC_SPI);
+    // Diagnostic (2026-10-05): GPIO12-15 (four of this bus's own CS lines,
+    // in the default routing table below) sit immediately next to SPI0's
+    // GPIO16-19 (the SD card -- see spi0_bus_lock.h). A standalone test
+    // (tools/sd_display_interleave_test/) isolated a real, reproducible
+    // SD failure caused by THIS bus's own traffic alone (no display
+    // involved at all) once its chip-reset calls ran back-to-back,
+    // unpaced -- consistent with crosstalk from fast edges on these
+    // adjacent pins coupling onto SPI0 at this 4 MHz SPI1 baud. Slowing
+    // the edge rate (slew) and lowering drive strength on SPI1's own
+    // SCK/MOSI and every CS pin trades a little signal margin on THIS bus
+    // (irrelevant at 4 MHz over short traces -- see VGM_SPI_BAUD_HZ's own
+    // comment) for less energy radiated/coupled onto the neighbouring SD
+    // card pins. Testing whether this alone fixes it before considering
+    // physical rewiring. See docs/design-notes.md.
+    gpio_set_slew_rate(PIN_SPI1_SCK, GPIO_SLEW_RATE_SLOW);
+    gpio_set_drive_strength(PIN_SPI1_SCK, GPIO_DRIVE_STRENGTH_2MA);
+    gpio_set_slew_rate(PIN_SPI1_MOSI, GPIO_SLEW_RATE_SLOW);
+    gpio_set_drive_strength(PIN_SPI1_MOSI, GPIO_DRIVE_STRENGTH_2MA);
 
     for (int i = 0; i < VGM_CHIP_COUNT; i++) {
         if (!s_routes[i].present) {
@@ -241,6 +259,8 @@ void slave_bus_init(void) {
         gpio_init(s_routes[i].cs_gpio);
         gpio_set_dir(s_routes[i].cs_gpio, GPIO_OUT);
         gpio_put(s_routes[i].cs_gpio, 1);
+        gpio_set_slew_rate(s_routes[i].cs_gpio, GPIO_SLEW_RATE_SLOW);
+        gpio_set_drive_strength(s_routes[i].cs_gpio, GPIO_DRIVE_STRENGTH_2MA);
     }
 }
 

@@ -7,12 +7,19 @@
 #include "hardware/spi.h"
 #include "sd_card.h"
 
+// 2026-10-04: briefly dropped to 4 MHz to test whether "Illegal command
+// CMD:17 response 0x4" (an SDXC card's SPI controller rejecting a plain
+// read-single-block command outright) was a signal-integrity/clock-margin
+// problem -- it was not (identical failure, same sector, at both 4 MHz and
+// 20 MHz), so back to 20 MHz. See design-notes.md for the investigation.
+#define SD_SPI_BAUD_HZ (20 * 1000 * 1000)
+
 static spi_t s_spi = {
     .hw_inst = spi0,
     .miso_gpio = 16,
     .mosi_gpio = 19,
     .sck_gpio = 18,
-    .baud_rate = 20 * 1000 * 1000,
+    .baud_rate = SD_SPI_BAUD_HZ,
     .DMA_IRQ_num = DMA_IRQ_0,
 };
 
