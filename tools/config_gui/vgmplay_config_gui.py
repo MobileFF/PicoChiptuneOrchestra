@@ -135,9 +135,9 @@ def parse_ini(text):
     """Return (settings, notes).
 
     settings: {canonical_chip: {"enabled": bool?, "cs": int?, "gap": int?,
-    "volume": int?}, PLAYER_SECTION: {"shuffle": bool?, "skip_button": int?,
-    "preview": bool?, "preview_seconds": int?, "recursive": bool?,
-    "root_dir": str?}}
+    "volume": int?}, PLAYER_SECTION: {"shuffle": bool?, "shuffle_folders": bool?,
+    "skip_button": int?, "preview": bool?, "preview_seconds": int?,
+    "recursive": bool?, "root_dir": str?}}
     notes:    list of human-readable strings about anything odd in the file.
     """
     settings = {}
@@ -176,6 +176,12 @@ def parse_ini(text):
                     notes.append(f"line {lineno}: bad boolean '{val}' for shuffle")
                 else:
                     settings.setdefault(PLAYER_SECTION, {})["shuffle"] = b
+            elif nk == "shufflefolders":
+                b = parse_bool(val)
+                if b is None:
+                    notes.append(f"line {lineno}: bad boolean '{val}' for shuffle_folders")
+                else:
+                    settings.setdefault(PLAYER_SECTION, {})["shuffle_folders"] = b
             elif nk in ("skipbutton", "skipgpio", "skippin"):
                 if not re.fullmatch(r"\d+", val):
                     notes.append(f"line {lineno}: bad number '{val}' for skip_button")
@@ -251,7 +257,7 @@ def rows_from_settings(settings):
     """Merge parsed settings over the built-in defaults into a full row dict.
 
     Includes CHIP_ORDER's per-chip rows plus one PLAYER_SECTION entry
-    ({"shuffle": bool, "skip_button": int?, "preview": bool,
+    ({"shuffle": bool, "shuffle_folders": bool, "skip_button": int?, "preview": bool,
     "preview_seconds": int?, "recursive": bool, "root_dir": str,
     "loop_count": int?, "flash_cache": bool}) for the non-chip [player]
     section.
@@ -270,6 +276,7 @@ def rows_from_settings(settings):
     tft_panel = p.get("tft_panel", "st7735")
     rows[PLAYER_SECTION] = {
         "shuffle": p.get("shuffle", False),
+        "shuffle_folders": p.get("shuffle_folders", False),
         "skip_button": p.get("skip_button", None),  # None -> firmware default GPIO2, no line written
         "preview": p.get("preview", False),
         "preview_seconds": p.get("preview_seconds", None),  # None -> firmware default 30, no line written
@@ -292,10 +299,10 @@ def rows_from_settings(settings):
 def default_rows():
     rows = {chip: {"enabled": True, "cs": DEFAULT_CS[chip], "gap": None, "volume": None}
             for chip in CHIP_ORDER}
-    rows[PLAYER_SECTION] = {"shuffle": False, "skip_button": None, "preview": False,
-                             "preview_seconds": None, "recursive": False, "root_dir": "",
-                             "loop_count": None, "flash_cache": False, "display": "oled",
-                             "tft_panel": "st7735"}
+    rows[PLAYER_SECTION] = {"shuffle": False, "shuffle_folders": False, "skip_button": None,
+                             "preview": False, "preview_seconds": None, "recursive": False,
+                             "root_dir": "", "loop_count": None, "flash_cache": False,
+                             "display": "oled", "tft_panel": "st7735"}
     return rows
 
 
@@ -303,6 +310,7 @@ def generate_ini(rows):
     out = [INI_HEADER]
     out.append("[player]")
     out.append(f"shuffle = {'yes' if rows[PLAYER_SECTION]['shuffle'] else 'no'}")
+    out.append(f"shuffle_folders = {'yes' if rows[PLAYER_SECTION]['shuffle_folders'] else 'no'}")
     if rows[PLAYER_SECTION]["skip_button"] is not None:
         out.append(f"skip_button = {int(rows[PLAYER_SECTION]['skip_button'])}")
     out.append(f"preview = {'yes' if rows[PLAYER_SECTION]['preview'] else 'no'}")
@@ -357,6 +365,10 @@ def validate(rows):
 
     if rows[PLAYER_SECTION]["tft_panel"] != "st7735" and rows[PLAYER_SECTION]["display"] != "tft":
         warnings.append("tft_panel is only used when display = tft (ignored with display = oled)")
+
+    if rows[PLAYER_SECTION]["shuffle_folders"] and not rows[PLAYER_SECTION]["recursive"]:
+        warnings.append("shuffle_folders is only meaningful when recursive = yes "
+                         "(ignored with recursive = no: only one folder is ever visited)")
 
     if rows[PLAYER_SECTION]["display"] == "tft":
         reserved[TFT_CS_GPIO] = "TFT SPI0 CS"
@@ -456,7 +468,8 @@ def run_check(path):
     prevsec_disp = "default(30)" if p["preview_seconds"] is None else p["preview_seconds"]
     root_disp = "(SD card root)" if not p["root_dir"] else p["root_dir"]
     loopcnt_disp = f"default({DEFAULT_LOOP_COUNT})" if p["loop_count"] is None else p["loop_count"]
-    print(f"  [player]   shuffle={p['shuffle']} skip_button={skip_disp} "
+    print(f"  [player]   shuffle={p['shuffle']} shuffle_folders={p['shuffle_folders']} "
+          f"skip_button={skip_disp} "
           f"preview={p['preview']} preview_seconds={prevsec_disp} recursive={p['recursive']} "
           f"root_dir={root_disp} loop_count={loopcnt_disp} flash_cache={p['flash_cache']} "
           f"display={p['display']} tft_panel={p['tft_panel']}")
@@ -500,6 +513,7 @@ def run_gui(initial_path=None):
              "sd_root_hint": os.path.dirname(os.path.abspath(initial_path)) if initial_path else None}
     vars_ = {}  # chip -> {"enabled": BooleanVar, "cs": StringVar, "gap": StringVar, "volume": StringVar}
     shuffle_var = tk.BooleanVar(value=False)     # [player] shuffle
+    shuffle_folders_var = tk.BooleanVar(value=False) # [player] shuffle_folders
     skip_button_var = tk.StringVar(value="")     # [player] skip_button (blank = default 2)
     preview_var = tk.BooleanVar(value=False)     # [player] preview
     preview_seconds_var = tk.StringVar(value="") # [player] preview_seconds (blank = default 30)
@@ -540,6 +554,9 @@ def run_gui(initial_path=None):
     row3.pack(fill="x", pady=(4, 0))
     ttk.Checkbutton(row3, text="Recursive (walk every subfolder, not just the start folder)",
                     variable=recursive_var).pack(side="left")
+    ttk.Checkbutton(row3, text="Shuffle folder order (independent of Shuffle playback above; "
+                                "only matters with Recursive)",
+                    variable=shuffle_folders_var).pack(side="left", padx=(18, 0))
 
     row3b = ttk.Frame(playerf)
     row3b.pack(fill="x", pady=(4, 0))
@@ -633,6 +650,7 @@ def run_gui(initial_path=None):
         loopcnt = loop_count_var.get().strip()
         rows[PLAYER_SECTION] = {
             "shuffle": bool(shuffle_var.get()),
+            "shuffle_folders": bool(shuffle_folders_var.get()),
             "skip_button": (int(skip) if re.fullmatch(r"\d+", skip) else (None if skip == "" else skip)),
             "preview": bool(preview_var.get()),
             "preview_seconds": (int(prevsec) if re.fullmatch(r"\d+", prevsec) else (None if prevsec == "" else prevsec)),
@@ -657,6 +675,7 @@ def run_gui(initial_path=None):
             v["volume"].set("" if r["volume"] is None else str(r["volume"]))
         p = rows[PLAYER_SECTION]
         shuffle_var.set(bool(p["shuffle"]))
+        shuffle_folders_var.set(bool(p["shuffle_folders"]))
         skip_button_var.set("" if p["skip_button"] is None else str(p["skip_button"]))
         preview_var.set(bool(p["preview"]))
         preview_seconds_var.set("" if p["preview_seconds"] is None else str(p["preview_seconds"]))

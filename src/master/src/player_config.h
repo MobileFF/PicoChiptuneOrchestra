@@ -49,9 +49,27 @@
 //                        ; When yes, main.c also walks every subdirectory
 //                        ; (depth-first, bounded -- see MAX_RECURSE_DEPTH in
 //                        ; main.c), playing each folder's .vgm/.vgz files in
-//                        ; turn before moving to the next folder. shuffle/
-//                        ; sort order still applies PER FOLDER, not globally
-//                        ; across the whole card.
+//                        ; turn before moving to the next folder. `shuffle`
+//                        ; above orders the SONGS WITHIN each folder and
+//                        ; still applies PER FOLDER, not globally across the
+//                        ; whole card -- see shuffle_folders below for the
+//                        ; separate, independent setting that orders the
+//                        ; FOLDERS THEMSELVES.
+//   shuffle_folders = no ; yes/no (default no). Only meaningful with
+//                        ; recursive = yes above (recursive = no never visits
+//                        ; more than the one start folder, so there's nothing
+//                        ; to order). Independent of `shuffle`: this key and
+//                        ; that one can differ, e.g. folders always
+//                        ; alphabetical with songs shuffled within each one,
+//                        ; or the reverse. When yes, the ORDER FOLDERS ARE
+//                        ; VISITED IN is freshly randomised every pass (same
+//                        ; "re-shuffled every time the whole card is
+//                        ; replayed" behaviour `shuffle` has for songs).
+//                        ; When no (default), folders are visited in
+//                        ; case-insensitive alphabetical order -- NOT FatFs's
+//                        ; raw on-disk directory order (usually creation/copy
+//                        ; order), which is what main.c used before this key
+//                        ; existed and had no way to request otherwise.
 //   root_dir = <path>    ; optional: scan starts inside this SD-card-relative
 //                        ; folder instead of the SD card root, e.g.
 //                        ; "GAMES/Sega" (a leading/trailing slash or a "0:"
@@ -152,6 +170,11 @@ uint32_t player_config_preview_seconds(void);
 
 // [player] recursive = yes|no, default false. Read by main.c's playlist loop.
 bool player_config_recursive_enabled(void);
+
+// [player] shuffle_folders = yes|no, default false. Independent of
+// player_config_shuffle_enabled() -- see that key's doc comment above.
+// Read by main.c's visit_dir(); meaningless when recursive is false.
+bool player_config_shuffle_folders_enabled(void);
 
 // [player] root_dir = <path>, default "" (SD card root). Returns a pointer to
 // a static buffer holding the normalised, SD-card-relative folder to start

@@ -7,7 +7,9 @@ card). Per sound chip -- including the optional second SN76489 for VGM's
 enable/disable, chip-select GPIO, and an optional per-byte CS-pulse gap. Plus
 general playback settings: shuffle, the skip button's GPIO, preview mode (cut
 every song short after N seconds), recursive mode (walk every subfolder
-instead of just the start folder), the SD-card-relative folder to start
+instead of just the start folder) with an independent shuffle_folders toggle
+for the order folders themselves are visited in (separate from shuffle,
+which only orders the songs within each folder), the SD-card-relative folder to start
 scanning from, how many times a looping song's loop region repeats before
 advancing to the next file, the opt-in flash-cache mode (copy each song
 into onboard flash before playing it, freeing the SD card's SPI bus for the
@@ -50,8 +52,10 @@ board whose built-in button is wired elsewhere, e.g. a "USR" button on
 GPIO24), **Preview mode** and **Preview seconds** (blank = firmware default
 30; cuts every song short and advances, as if the skip button had been
 pressed — for auditioning a whole card quickly), **Recursive** (walks every
-subfolder under the start folder, playing each one's files in turn — shuffle
-still applies per folder, not globally), and **Start folder** (blank = SD
+subfolder under the start folder, playing each one's files in turn — Shuffle
+still orders the songs within each folder, not globally) with an adjacent
+**Shuffle folder order** checkbox (only matters with Recursive on; orders the
+folders themselves, independent of Shuffle), and **Start folder** (blank = SD
 card root; a card-relative path like `GAMES/Sega` to scan from there instead
 — a leading/trailing slash or a `0:` drive prefix, if typed, is stripped
 automatically; combine with Recursive to walk everything under just that one

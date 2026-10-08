@@ -28,6 +28,7 @@ static bool name_matches(const char *raw, const char *key) {
 // Not a chip -- see player_config.h's [player] section doc comment.
 #define SECTION_PLAYER (-2)
 static bool s_shuffle_enabled = false;
+static bool s_shuffle_folders_enabled = false;
 static int s_skip_button_gpio = -1; // -1 = not set, caller keeps its own default
 static bool s_preview_enabled = false;
 static uint32_t s_preview_seconds = 30;
@@ -40,6 +41,11 @@ static bool s_display_is_tft = false; // false = oled (default), true = tft
 static player_tft_panel_t s_tft_panel = PLAYER_TFT_ST7735;
 
 bool player_config_shuffle_enabled(void) { return s_shuffle_enabled; }
+// Independent of player_config_shuffle_enabled() -- that one orders the
+// SONGS WITHIN a folder; this one orders the FOLDERS THEMSELVES under
+// [player] recursive (main.c's visit_dir()). Ignored when recursive = no
+// (there's only ever one folder to visit then).
+bool player_config_shuffle_folders_enabled(void) { return s_shuffle_folders_enabled; }
 int player_config_skip_button_gpio(void) { return s_skip_button_gpio; }
 bool player_config_preview_enabled(void) { return s_preview_enabled; }
 uint32_t player_config_preview_seconds(void) { return s_preview_seconds; }
@@ -159,6 +165,10 @@ int player_config_apply(const char *text) {
             if (!strcasecmp(key, "shuffle")) {
                 bool b;
                 if (parse_bool(val, &b)) { s_shuffle_enabled = b; applied++; }
+                else printf("config: bad boolean '%s' for %s\n", val, key);
+            } else if (!strcasecmp(key, "shuffle_folders") || !strcasecmp(key, "shufflefolders")) {
+                bool b;
+                if (parse_bool(val, &b)) { s_shuffle_folders_enabled = b; applied++; }
                 else printf("config: bad boolean '%s' for %s\n", val, key);
             } else if (!strcasecmp(key, "skip_button") || !strcasecmp(key, "skip_gpio") ||
                        !strcasecmp(key, "skip_pin")) {

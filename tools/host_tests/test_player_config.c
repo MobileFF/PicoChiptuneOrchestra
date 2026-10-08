@@ -57,6 +57,7 @@ int main(void) {
         "\n"
         "[player]\n"             // not a chip -- general playback settings
         "shuffle = yes\n"
+        "shuffle_folders = yes\n"
         "skip_button = 24\n"     // clone board's USR button, e.g.
         "preview = on\n"
         "preview_seconds = 15\n"
@@ -71,6 +72,7 @@ int main(void) {
     #define CHK(c) do { if (!(c)) { printf("FAIL: %s\n", #c); fail = 1; } } while (0)
 
     CHK(player_config_shuffle_enabled() == false); // default before parsing
+    CHK(player_config_shuffle_folders_enabled() == false); // default before parsing
     CHK(player_config_skip_button_gpio() == -1);   // default: not set
     CHK(player_config_preview_enabled() == false); // default before parsing
     CHK(player_config_preview_seconds() == 30);    // built-in default
@@ -81,6 +83,7 @@ int main(void) {
     CHK(player_config_display_is_tft() == false);      // default before parsing (oled)
     int n = player_config_apply(cfg);
     CHK(player_config_shuffle_enabled() == true);   // [player] shuffle = yes
+    CHK(player_config_shuffle_folders_enabled() == true); // [player] shuffle_folders = yes
     CHK(player_config_skip_button_gpio() == 24);    // [player] skip_button = 24
     CHK(player_config_preview_enabled() == true);   // [player] preview = on
     CHK(player_config_preview_seconds() == 15);     // [player] preview_seconds = 15
@@ -102,10 +105,10 @@ int main(void) {
     CHK(g_cs[VGM_CHIP_SCC] == 28);
     CHK(g_present[VGM_CHIP_YM2612] == -1);          // never mentioned -> untouched
     CHK(g_cs[VGM_CHIP_YM2612] == -1);
-    CHK(n == 16); // sn.enabled, ay.cs, ay.gap, ay.volume, segapcm.enabled, segapcm.cs, scc.cs,
-                  // player.shuffle, player.skip_button, player.preview, player.preview_seconds,
-                  // player.recursive, player.root_dir, player.loop_count, player.flash_cache,
-                  // player.display
+    CHK(n == 17); // sn.enabled, ay.cs, ay.gap, ay.volume, segapcm.enabled, segapcm.cs, scc.cs,
+                  // player.shuffle, player.shuffle_folders, player.skip_button, player.preview,
+                  // player.preview_seconds, player.recursive, player.root_dir, player.loop_count,
+                  // player.flash_cache, player.display
 
     // root_dir aliases + a plain (no prefix/slashes) value + an empty value
     // resetting it back to "" (SD card root).
@@ -203,6 +206,20 @@ int main(void) {
     int n22 = player_config_apply("[player]\ntft_panel = st7735\n");
     CHK(n22 == 1);
     CHK(player_config_tft_panel() == PLAYER_TFT_ST7735);
+
+    // shuffle_folders: alias + rejection of a bad boolean, and independence
+    // from shuffle (folder order vs. song-within-folder order -- see
+    // player_config.h). n == 17's cfg block above already set both to true.
+    int n23 = player_config_apply("[player]\nshuffle_folders = no\n");
+    CHK(n23 == 1);
+    CHK(player_config_shuffle_folders_enabled() == false);
+    CHK(player_config_shuffle_enabled() == true); // unaffected by shuffle_folders
+    int n24 = player_config_apply("[player]\nshufflefolders = yes\n"); // no-underscore alias
+    CHK(n24 == 1);
+    CHK(player_config_shuffle_folders_enabled() == true);
+    int n25 = player_config_apply("[player]\nshuffle_folders = maybe\n"); // bad boolean -> rejected
+    CHK(n25 == 0);
+    CHK(player_config_shuffle_folders_enabled() == true); // unchanged from n24 above
 
     printf("applied=%d\n", n);
     printf(fail ? "FAILED\n" : "ok\n");

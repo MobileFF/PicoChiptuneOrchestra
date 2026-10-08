@@ -72,6 +72,36 @@ def test_shuffle_roundtrip_and_aliases():
     assert any("unknown key 'wobble' in [player]" in n for n in notes2)
 
 
+def test_shuffle_folders_roundtrip_and_independence():
+    rows = g.default_rows()
+    assert rows[g.PLAYER_SECTION]["shuffle_folders"] is False  # default
+
+    # independent of shuffle: set only shuffle_folders, shuffle stays False
+    rows[g.PLAYER_SECTION]["shuffle_folders"] = True
+    s, notes = g.parse_ini(g.generate_ini(rows))
+    assert notes == []
+    assert g.rows_from_settings(s) == rows
+    assert g.rows_from_settings(s)[g.PLAYER_SECTION]["shuffle"] is False
+
+    # no-underscore alias, and a bad boolean is rejected with a note
+    s2, notes2 = g.parse_ini("[player]\nshufflefolders = on\n")
+    assert g.rows_from_settings(s2)[g.PLAYER_SECTION]["shuffle_folders"] is True
+    assert notes2 == []
+    _, notes3 = g.parse_ini("[player]\nshuffle_folders = maybe\n")
+    assert any("bad boolean 'maybe' for shuffle_folders" in n for n in notes3)
+
+    # warns when set without recursive = yes (meaningless: only one folder
+    # is ever visited)
+    e, w = g.validate({**g.default_rows(),
+                       g.PLAYER_SECTION: {**g.default_rows()[g.PLAYER_SECTION],
+                                           "shuffle_folders": True, "recursive": False}})
+    assert e == [] and any("shuffle_folders is only meaningful when recursive = yes" in x for x in w)
+    e2, w2 = g.validate({**g.default_rows(),
+                         g.PLAYER_SECTION: {**g.default_rows()[g.PLAYER_SECTION],
+                                             "shuffle_folders": True, "recursive": True}})
+    assert e2 == [] and not any("shuffle_folders" in x for x in w2)
+
+
 def test_skip_button_and_preview_roundtrip_and_aliases():
     rows = g.default_rows()
     assert rows[g.PLAYER_SECTION]["skip_button"] is None       # default: use firmware's own

@@ -3,11 +3,13 @@
 // Mounts the SD card, plays every .vgm/.vgz file in the root directory (or,
 // if vgmplay.ini's [player] root_dir is set, that folder instead) -- or, if
 // [player] recursive = yes, every subdirectory under the start point too,
-// one folder at a time (see visit_dir()) -- in case-insensitive sorted order
-// (looping forever) or, if [player] shuffle = yes, a freshly-randomised
-// order per folder each pass, dispatching register writes to the slave
-// boards over slave_bus. See docs/circuit.md for wiring and
-// docs/design-notes.md for VGM command coverage.
+// one folder at a time (see visit_dir()), itself in case-insensitive sorted
+// order or, if [player] shuffle_folders = yes, a freshly-randomised order
+// per pass -- in case-insensitive sorted order (looping forever) or, if
+// [player] shuffle = yes, a freshly-randomised order per folder each pass,
+// dispatching register writes to the slave boards over slave_bus. See
+// docs/circuit.md for wiring and docs/design-notes.md for VGM command
+// coverage.
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -160,6 +162,21 @@ static bool is_playable(const FILINFO *info) {
 static char s_dir_path[MAX_RECURSE_DEPTH + 1][DIR_PATH_BUF_SZ];
 static char s_subdir_names[MAX_RECURSE_DEPTH + 1][SUBDIR_NAMES_BUF_SZ];
 static uint16_t s_subdir_off[MAX_RECURSE_DEPTH + 1][MAX_SUBDIRS];
+
+// [player] shuffle_folders: orders s_subdir_off[depth] the same way
+// name_cmp()/shuffle_name_off() order s_name_off above, but subdir names
+// live in a PER-DEPTH buffer (s_subdir_names[depth], not one shared global
+// like s_names) since a parent's subdir list must stay valid for the whole
+// time its children are being recursed into -- see this file's recursive-
+// walk doc comment below. qsort()'s comparator takes no extra context, so
+// the depth being sorted is stashed here immediately before the qsort()
+// call and read back inside subdir_cmp(); never reentrant across depths
+// (each level's sort fully completes, synchronously, before recursing).
+static int s_subdir_cmp_depth;
+static int subdir_cmp(const void *a, const void *b) {
+    const char *names = s_subdir_names[s_subdir_cmp_depth];
+    return strcasecmp(names + *(const uint16_t *)a, names + *(const uint16_t *)b);
+}
 static DIR s_scan_dir;
 static FILINFO s_scan_info;
 static int s_played_this_pass;
@@ -187,12 +204,14 @@ static bool is_real_subdir(const FILINFO *info) {
 static bool play_one(const char *dir_path, const char *fname); // fwd decl
 
 // Scans `s_dir_path[depth]` once, playing every .vgm/.vgz it finds there
-// (sorted or shuffled exactly like the non-recursive root-only path always
-// did), then -- only when [player] recursive is on -- recurses into every
-// subdirectory found in that same scan. depth 0 is always visited first (the
-// SD card root, or [player] root_dir if set -- main() fills in s_dir_path[0]
-// before calling this); depth 0's caller is responsible for its own "nothing
-// played this whole pass" messaging, using s_played_this_pass.
+// (sorted or shuffled per [player] shuffle exactly like the non-recursive
+// root-only path always did), then -- only when [player] recursive is on --
+// recurses into every subdirectory found in that same scan, itself sorted or
+// shuffled per [player] shuffle_folders (independent of shuffle -- see
+// player_config.h). depth 0 is always visited first (the SD card root, or
+// [player] root_dir if set -- main() fills in s_dir_path[0] before calling
+// this); depth 0's caller is responsible for its own "nothing played this
+// whole pass" messaging, using s_played_this_pass.
 static void visit_dir(int depth) {
     const char *dir_path = s_dir_path[depth];
     bool recursive = player_config_recursive_enabled();
@@ -288,6 +307,19 @@ static void visit_dir(int depth) {
         }
         for (int i = 0; i < nfiles; i++) {
             if (play_one(dir_path, s_names + s_name_off[i])) s_played_this_pass++;
+        }
+    }
+
+    // [player] shuffle_folders: order THIS level's subdirectories (not the
+    // files within them -- that's shuffle/s_name_off above, already done)
+    // before descending into any of them, so a shuffled order is also the
+    // order main.c's own cover-art/status display reaches each folder in.
+    if (nsubdirs > 1) {
+        if (player_config_shuffle_folders_enabled()) {
+            shuffle_name_off(s_subdir_off[depth], nsubdirs);
+        } else {
+            s_subdir_cmp_depth = depth;
+            qsort(s_subdir_off[depth], nsubdirs, sizeof(s_subdir_off[depth][0]), subdir_cmp);
         }
     }
 

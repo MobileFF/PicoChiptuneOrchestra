@@ -244,7 +244,8 @@ enabled = no          ; 無効にするとその VGM コマンドは無視され
   警告ログを出します(動作は続行)。範囲外(29以上)の値は無視。
 - 書き換えたら SD を挿し直して電源再投入。
 - チップごとの設定とは別に、`[player]`セクションで曲送りボタンのGPIO変更(`skip_button`)、
-  試聴モード(`preview`/`preview_seconds`)、SDカード内フォルダの再帰走査(`recursive`)、
+  試聴モード(`preview`/`preview_seconds`)、SDカード内フォルダの再帰走査(`recursive`、
+  フォルダを訪れる順序は`shuffle_folders`で曲順の`shuffle`とは独立にシャッフルできる)、
   スキャン開始フォルダの変更(`root_dir`。`recursive = yes`と組み合わせると「指定フォルダの
   中だけを再帰的に再生」できる)、ループ回数の変更(`loop_count`。既定2回、0で曲送りボタンが
   押されるまで無限ループ、1でループなし)、フラッシュ一時キャッシュ(`flash_cache`。既定no。
