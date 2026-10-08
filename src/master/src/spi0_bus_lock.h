@@ -31,6 +31,11 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+// The baud rate the SD card driver runs SPI0 at (hw_config.c's SD_SPI_BAUD_HZ
+// is this). Anything else on the bus that changes the baud rate (tft_big.c's
+// slower panel transactions) must restore this afterwards.
+#define SPI0_BUS_BAUD_HZ (20 * 1000 * 1000)
+
 // Call once from core0, before core1 is launched (oled_ui_init() launches
 // it) and before anything touches SPI0. Idempotent-unsafe -- call exactly
 // once.

@@ -189,6 +189,21 @@ int main(void) {
     CHK(n18 == 1);
     CHK(player_config_flash_cache_enabled() == false); // unchanged
 
+    // tft_panel: case-insensitive value, a bad one is rejected and leaves the
+    // previous panel in place (2026-10-07: ILI9341/ST7796 support).
+    int n19 = player_config_apply("[player]\ntft_panel = ILI9341\n");
+    CHK(n19 == 1);
+    CHK(player_config_tft_panel() == PLAYER_TFT_ILI9341);
+    int n20 = player_config_apply("[player]\ntft_panel = st7796\n");
+    CHK(n20 == 1);
+    CHK(player_config_tft_panel() == PLAYER_TFT_ST7796);
+    int n21 = player_config_apply("[player]\ntft_panel = lcd\n"); // bad value -> rejected
+    CHK(n21 == 0);
+    CHK(player_config_tft_panel() == PLAYER_TFT_ST7796); // unchanged from n20 above
+    int n22 = player_config_apply("[player]\ntft_panel = st7735\n");
+    CHK(n22 == 1);
+    CHK(player_config_tft_panel() == PLAYER_TFT_ST7735);
+
     printf("applied=%d\n", n);
     printf(fail ? "FAILED\n" : "ok\n");
     return fail;

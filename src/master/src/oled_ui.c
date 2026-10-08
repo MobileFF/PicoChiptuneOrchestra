@@ -12,6 +12,8 @@
 
 #include "ssd1306.h"
 #include "st7735.h"
+#include "tft_big.h"
+#include "tft_panel.h"
 #include "tft_pins.h"
 #include "vgm_chips.h"
 #include "vgm_player.h"
@@ -44,14 +46,23 @@ static inline void oled_wait_us(uint32_t us) { busy_wait_us(us); }
 // (unlike skip_button's GPIO) -- add that if a wiring actually needs it;
 // these three spare, genuine-Pico-header-exposed GPIOs were free.
 
-// Both panels happen to be 128px wide, so they share one glyph-columns-per-
-// line count; draw_wrapped()/draw_chips() below use SSD1306_COLS_PER_LINE
-// for both backends on that assumption -- this makes it a build error the
-// day that stops being true instead of a silently-wrong TFT layout.
-_Static_assert(SSD1306_COLS_PER_LINE == ST7735_COLS_PER_LINE,
-               "draw_wrapped()/draw_chips() assume both panel backends share one column count");
 
 // --- backend selection (chosen once in oled_ui_init(), from [player] display) --
+
+// Where each piece of the now-playing / status screen goes, in text rows
+// (pages) counted from the top of the text area. Per panel: the 8-row OLED /
+// ST7735 layout is the original; the big panels have more rows and columns.
+#define LAYOUT_MAX_COLS 26
+typedef struct {
+    uint8_t cols;        // characters per text row
+    uint8_t name_lines;  // now-playing filename, from page 0
+    uint8_t time_page;
+    uint8_t label_page;  // "Chips:"
+    uint8_t chips_page;
+    uint8_t chips_lines;
+    uint8_t status_page; // status message in MODE_STATUS (after the 2-row title)
+    uint8_t status_lines;
+} display_layout_t;
 
 typedef struct {
     bool (*init)(void);   // bring up the panel; see each backend's own init doc comment
@@ -66,6 +77,7 @@ typedef struct {
                               // st7735.h's COVER_AREA_H so cover_image.c's
                               // once-per-folder image has the rows above it
                               // (see text_at() below).
+    const display_layout_t *layout;
 } display_backend_t;
 
 static void oled_i2c_bring_up(void); // defined below, near the ssd1306 init wrapper
@@ -81,11 +93,17 @@ static bool backend_st7735_init(void) {
     return st7735_init(spi0, TFT_CS_GPIO, TFT_DC_GPIO, TFT_RST_GPIO, s_sd_spi0_ready);
 }
 
+static const display_layout_t LAYOUT_8ROW = {
+    .cols = 21, .name_lines = 2, .time_page = 3, .label_page = 5,
+    .chips_page = 6, .chips_lines = 2, .status_page = 3, .status_lines = 2,
+};
+
 static const display_backend_t BACKEND_SSD1306 = {
     .init = backend_ssd1306_init, .recover = oled_i2c_bring_up,
     .clear = ssd1306_clear, .text = ssd1306_text, .show = ssd1306_show,
     .redraw_ms = 150, // I2C0 is never shared with anything -- no reason to go slower
     .text_page_offset = 0,
+    .layout = &LAYOUT_8ROW,
 };
 // Deliberately much slower than the OLED's 150ms (2026-10-02 finding):
 // frequent SPI0 traffic from the TFT was causing the SD card to see
@@ -104,10 +122,44 @@ static const display_backend_t BACKEND_ST7735 = {
     .clear = st7735_clear, .text = st7735_text, .show = st7735_show,
     .redraw_ms = 500,
     .text_page_offset = COVER_AREA_H / 8, // 12 -- see cover_image.h
+    .layout = &LAYOUT_8ROW,
 };
 
 _Static_assert(COVER_AREA_H % 8 == 0,
                "text_page_offset assumes COVER_AREA_H is a whole number of 8px pages");
+
+// Big panels: text rows are 16px and characters 12px (tft_big.h), so cols is
+// width/12 and rows is (height - cover_h)/16 -- 10 for the ILI9341 (320-160),
+// 15 for the ST7796 (480-240). Cover heights are tft_panel.c's.
+static const display_layout_t LAYOUT_ILI9341 = {
+    .cols = 20, .name_lines = 3, .time_page = 4, .label_page = 6,
+    .chips_page = 7, .chips_lines = 3, .status_page = 3, .status_lines = 3,
+};
+static const display_layout_t LAYOUT_ST7796 = {
+    .cols = 26, .name_lines = 4, .time_page = 5, .label_page = 7,
+    .chips_page = 8, .chips_lines = 4, .status_page = 3, .status_lines = 4,
+};
+
+static bool backend_tft_big_init(void) {
+    return tft_big_init(spi0, TFT_CS_GPIO, TFT_DC_GPIO, TFT_RST_GPIO, s_sd_spi0_ready);
+}
+
+// Same redraw interval as the ST7735: each redraw here now pushes the whole
+// text area (see tft_big.h), so it isn't made any more frequent than that.
+static const display_backend_t BACKEND_ILI9341 = {
+    .init = backend_tft_big_init, .recover = NULL,
+    .clear = tft_big_clear, .text = tft_big_text, .show = tft_big_show,
+    .redraw_ms = 500,
+    .text_page_offset = 0, // tft_big.c positions the text area under the cover itself
+    .layout = &LAYOUT_ILI9341,
+};
+static const display_backend_t BACKEND_ST7796 = {
+    .init = backend_tft_big_init, .recover = NULL,
+    .clear = tft_big_clear, .text = tft_big_text, .show = tft_big_show,
+    .redraw_ms = 500,
+    .text_page_offset = 0,
+    .layout = &LAYOUT_ST7796,
+};
 
 static const display_backend_t *s_backend = &BACKEND_SSD1306; // set in oled_ui_init()
 
@@ -202,28 +254,29 @@ static void text_at(uint8_t x, uint8_t page, const char *s) {
     s_backend->text(x, page + s_backend->text_page_offset, s);
 }
 
-// Split `s` across two page rows of SSD1306_COLS_PER_LINE (21) chars. The
-// second row gets a trailing ".." if the string is longer than both rows.
-static void draw_wrapped(const char *s, uint8_t page0) {
-    char l0[SSD1306_COLS_PER_LINE + 1];
-    char l1[SSD1306_COLS_PER_LINE + 1];
-    size_t n = strlen(s);
-    size_t w = SSD1306_COLS_PER_LINE;
-
-    snprintf(l0, sizeof(l0), "%.*s", (int)w, s);
-    if (n <= w) {
-        l1[0] = '\0';
-    } else if (n <= 2 * w) {
-        snprintf(l1, sizeof(l1), "%s", s + w);
-    } else {
-        snprintf(l1, sizeof(l1), "%.*s..", (int)(w - 2), s + w);
+// Wraps `s` over `lines` text rows of layout cols characters each. If it
+// doesn't fit, the last row ends in "..".
+static void draw_wrapped(const char *s, uint8_t page0, uint8_t lines) {
+    const size_t w = s_backend->layout->cols;
+    const size_t n = strlen(s);
+    const bool overflow = n > lines * w;
+    char buf[LAYOUT_MAX_COLS + 1];
+    for (uint8_t i = 0; i < lines; i++) {
+        size_t start = i * w;
+        if (start >= n) {
+            buf[0] = '\0';
+        } else if (overflow && i == lines - 1) {
+            snprintf(buf, sizeof(buf), "%.*s..", (int)(w - 2), s + start);
+        } else {
+            snprintf(buf, sizeof(buf), "%.*s", (int)w, s + start);
+        }
+        text_at(0, page0 + i, buf);
     }
-    text_at(0, page0, l0);
-    text_at(0, page0 + 1, l1);
 }
 
-static void draw_chips(uint32_t mask, uint8_t page0) {
-    char line[2][SSD1306_COLS_PER_LINE + 1] = {{0}, {0}};
+static void draw_chips(uint32_t mask, uint8_t page0, uint8_t lines) {
+    const size_t w = s_backend->layout->cols;
+    char line[4][LAYOUT_MAX_COLS + 1] = {{0}};
     int row = 0;
     size_t len = 0;
 
@@ -235,12 +288,12 @@ static void draw_chips(uint32_t mask, uint8_t page0) {
         if (!(mask & (1u << c)) || !CHIP_LABEL[c]) continue;
         const char *name = CHIP_LABEL[c];
         size_t add = strlen(name) + (len ? 1 : 0);
-        if (len + add > SSD1306_COLS_PER_LINE) {
-            if (row == 1) { // no room left -- mark overflow and stop
-                if (len + 1 <= SSD1306_COLS_PER_LINE) strcat(line[row], "+");
+        if (len + add > w) {
+            if (row == lines - 1) { // no room left -- mark overflow and stop
+                if (len + 1 <= w) strcat(line[row], "+");
                 break;
             }
-            row = 1;
+            row++;
             len = 0;
             add = strlen(name);
         }
@@ -248,12 +301,12 @@ static void draw_chips(uint32_t mask, uint8_t page0) {
         strcat(line[row], name);
         len += strlen(name);
     }
-    text_at(0, page0, line[0]);
-    text_at(0, page0 + 1, line[1]);
+    for (uint8_t r = 0; r < lines; r++) text_at(0, page0 + r, line[r]);
 }
 
 // Returns false if the framebuffer push to the panel failed.
 static bool render(ui_mode_t mode, const char *text, uint32_t chip_mask, uint32_t elapsed_s) {
+    const display_layout_t *L = s_backend->layout;
     s_backend->clear();
 
     if (mode == MODE_STATUS) {
@@ -263,20 +316,20 @@ static bool render(ui_mode_t mode, const char *text, uint32_t chip_mask, uint32_
         // strand a lone "a" on the second line).
         text_at(0, 0, "PicoChiptune");
         text_at(0, 1, "Orchestra");
-        draw_wrapped(text, 3);
+        draw_wrapped(text, L->status_page, L->status_lines);
         return s_backend->show();
     }
 
-    draw_wrapped(text, 0);                 // filename, pages 0-1
+    draw_wrapped(text, 0, L->name_lines);
 
     if (elapsed_s > 99 * 60 + 59) elapsed_s = 99 * 60 + 59;
     char t[16];
     snprintf(t, sizeof(t), "Time  %02u:%02u",
              (unsigned)(elapsed_s / 60), (unsigned)(elapsed_s % 60));
-    text_at(0, 3, t);              // elapsed, page 3
+    text_at(0, L->time_page, t);
 
-    text_at(0, 5, "Chips:");       // page 5
-    draw_chips(chip_mask, 6);              // pages 6-7
+    text_at(0, L->label_page, "Chips:");
+    draw_chips(chip_mask, L->chips_page, L->chips_lines);
     return s_backend->show();
 }
 
@@ -391,10 +444,15 @@ void oled_ui_init(bool sd_spi0_ready) {
     s_sd_spi0_ready = sd_spi0_ready; // read by backend_st7735_init() on core1, below
 
     if (player_config_display_is_tft()) {
-        s_backend = &BACKEND_ST7735;
-        printf("display: [player] display = tft -- ST7735 on SPI0 "
+        const char *panel = "ST7735";
+        switch (player_config_tft_panel()) {
+        case PLAYER_TFT_ILI9341: s_backend = &BACKEND_ILI9341; panel = "ILI9341"; break;
+        case PLAYER_TFT_ST7796:  s_backend = &BACKEND_ST7796;  panel = "ST7796";  break;
+        default:                 s_backend = &BACKEND_ST7735;  break;
+        }
+        printf("display: [player] display = tft -- %s on SPI0 "
                "(CS=GPIO%u DC=GPIO%u RST=GPIO%u), core1 render loop started\n",
-               TFT_CS_GPIO, TFT_DC_GPIO, TFT_RST_GPIO);
+               panel, TFT_CS_GPIO, TFT_DC_GPIO, TFT_RST_GPIO);
     } else {
         s_backend = &BACKEND_SSD1306;
         oled_i2c_bring_up();

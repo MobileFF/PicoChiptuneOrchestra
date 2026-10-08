@@ -8,3 +8,8 @@
 #define TFT_CS_GPIO  3
 #define TFT_DC_GPIO  4
 #define TFT_RST_GPIO 5
+
+// SPI0's SCK/MOSI (the SD card's own wiring, shared with the TFT -- see
+// spi0_bus_lock.h). Used by every TFT driver that brings SPI0 up itself.
+#define TFT_SPI0_SCK_GPIO  18
+#define TFT_SPI0_MOSI_GPIO 19

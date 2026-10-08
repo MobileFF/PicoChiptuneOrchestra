@@ -390,3 +390,29 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+def test_tft_panel_roundtrip_and_validation():
+    rows = g.default_rows()
+    assert rows[g.PLAYER_SECTION]["tft_panel"] == "st7735"  # default
+    # default writes no line at all
+    assert "tft_panel" not in g.generate_ini(rows)
+
+    # non-default panel round-trips through generate/parse
+    rows[g.PLAYER_SECTION]["display"] = "tft"
+    rows[g.PLAYER_SECTION]["tft_panel"] = "ili9341"
+    s, notes = g.parse_ini(g.generate_ini(rows))
+    assert notes == []
+    assert g.rows_from_settings(s) == rows
+
+    # case-insensitive value; a bad one is rejected with a note
+    s2, notes2 = g.parse_ini("[player]\nTFT_PANEL = ST7796\n")
+    assert g.rows_from_settings(s2)[g.PLAYER_SECTION]["tft_panel"] == "st7796"
+    assert notes2 == []
+    _, notes3 = g.parse_ini("[player]\ntft_panel = lcd\n")
+    assert any("bad value 'lcd' for tft_panel" in n for n in notes3)
+
+    # a non-default panel with display = oled is only a warning (it's ignored)
+    e, w = g.validate({**g.default_rows(),
+                       g.PLAYER_SECTION: {**g.default_rows()[g.PLAYER_SECTION], "tft_panel": "st7796"}})
+    assert e == [] and any("tft_panel is only used when display = tft" in x for x in w)

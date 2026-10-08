@@ -107,7 +107,8 @@ SDカードのルート直下に`.vgm`/`.vgz`ファイルを置けば、ファ�
 基板自身のオンボードフラッシュへ曲データをコピーしてから再生するようになり、再生中はSDカードが
 アイドルになります(既定no。SDカードのSPIバスを完全に空けたい場合などのデバッグ/用途限定機能 --
 通常は不要。詳細は[docs/design-notes.md](docs/design-notes.md)参照)。ステータス表示は既定で
-SSD1306(I2C)ですが、`display = tft`にするとSPI接続のST7735に切り替えられます
+SSD1306(I2C)ですが、`display = tft`にするとSPI接続のTFTに切り替えられます(`tft_panel`で
+ST7735(既定) / ILI9341 / ST7796を選択。ILI9341・ST7796は大画面向けのレイアウトになります
 (SDカードとSPIバスを共有しますが、`flash_cache`の強制有効化なしで実機確認済み -- 配線は
 [docs/circuit.md 1.1b](docs/circuit.md)参照)。`display = tft`のときは、VGMと
 同じフォルダに`.jpg`/`.jpeg`/`.png`(パレット形式PNG、1/2/4bit/pixelの詰め込みも対応)を

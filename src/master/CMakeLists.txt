@@ -11,6 +11,8 @@ add_executable(master
     src/inflate_scratch.c
     src/ssd1306.c
     src/st7735.c
+    src/tft_big.c
+    src/tft_panel.c
     src/oled_ui.c
     src/core_fault.c
     src/player_config.c

@@ -163,8 +163,8 @@ Links the *actual shipped* `cover_image.c`, `third_party/tjpgd/tjpgd.c`
 DEFLATE step) against real test images under `cover_test_images/`
 (committed -- see `gen_cover_test_images.py`'s own doc comment for how to
 regenerate them, needs Pillow; not needed to just run this test). Stubs only
-`st7735_cover_clear()`/`st7735_cover_blit()` (captured into a plain test
-framebuffer instead of real SPI hardware), `player_config_display_is_tft()`
+`tft_cover_clear()`/`tft_cover_blit()`/`tft_panel_geom()` from `tft_panel.h`
+(captured into a plain test framebuffer instead of real SPI hardware), `player_config_display_is_tft()`
 (forced true), and `spi0_bus_lock()`/`spi0_bus_unlock()` (no-ops -- a single-
 threaded host has no core1 TFT redraw to serialize against). This test is
 what caught cover_image.c's PNG decoder treating

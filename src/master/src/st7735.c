@@ -6,6 +6,7 @@
 
 #include "font5x7.h"
 #include "spi0_bus_lock.h"
+#include "tft_pins.h"
 
 // --- state -----------------------------------------------------------------
 
@@ -18,14 +19,6 @@ static uint16_t s_fb[ST7735_W * ST7735_H];
 
 #define COLOR_BG 0x0000 // black
 #define COLOR_FG 0xFFFF // white
-
-// SPI0's physical SCK/MOSI pins -- must match hw_config.c's spi_t.sck_gpio/
-// mosi_gpio (the SD card's own wiring), since this is the same shared bus
-// (see spi0_bus_lock.h). Not passed into st7735_init() as parameters: in
-// this project they're fixed by the board wiring, same as TFT_CS_GPIO etc.
-// in tft_pins.h, and nothing outside this file needs to know them.
-#define TFT_SPI0_SCK_GPIO  18
-#define TFT_SPI0_MOSI_GPIO 19
 
 // --- low-level SPI -----------------------------------------------------------
 //

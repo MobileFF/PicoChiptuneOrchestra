@@ -104,6 +104,11 @@
 //                        ; hardware-confirmed fix for an SD card that didn't
 //                        ; fully release the shared bus between transactions
 //                        ; at the OLED's faster rate (see design-notes.md).
+//   tft_panel = st7735   ; st7735 (default, 128x160) | ili9341 (240x320) |
+//                        ; st7796 (320x480). Which controller display = tft
+//                        ; drives. ili9341/st7796 use a larger layout (2x
+//                        ; font, bigger cover-art area) and no full-screen
+//                        ; RAM framebuffer (see tft_big.c, tft_panel.h).
 //                        ; tft used to FORCE flash_cache = yes on regardless
 //                        ; of this key's own setting above, on the theory
 //                        ; that streaming a whole song straight off the SD
@@ -167,6 +172,16 @@ bool player_config_flash_cache_enabled(void);
 // [player] display = oled|tft, default false (oled). Read once by
 // oled_ui_init() to decide which panel backend to bring up.
 bool player_config_display_is_tft(void);
+
+// [player] tft_panel = st7735|ili9341|st7796, default st7735. Which TFT
+// controller display = tft drives (ignored when display = oled). Read by
+// oled_ui.c (layout + backend) and tft_panel.c (geometry, cover-art area).
+typedef enum {
+    PLAYER_TFT_ST7735 = 0,  // 128x160, RAM-framebuffer driver (st7735.c)
+    PLAYER_TFT_ILI9341,     // 240x320 portrait, tft_big.c
+    PLAYER_TFT_ST7796,      // 320x480 portrait, tft_big.c
+} player_tft_panel_t;
+player_tft_panel_t player_config_tft_panel(void);
 
 // Read `path` from the mounted filesystem and hand it to
 // player_config_apply(). Call after f_mount, before slave_bus_init().

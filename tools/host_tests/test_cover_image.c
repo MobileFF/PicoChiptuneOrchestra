@@ -2,7 +2,7 @@
 // cover_image.c + third_party/tjpgd/tjpgd.c + third_party/miniz_tinfl +
 // inflate_scratch.c (not a reimplementation) against real test images (see
 // gen_cover_test_images.py / cover_test_images/, committed so this test
-// needs no image library at run time). Stubs only the two st7735.h
+// needs no image library at run time). Stubs only the tft_panel.h
 // functions that need real hardware (cover_clear/cover_blit -- captured
 // into a plain test framebuffer here instead), player_config_display_is_tft()
 // (forced true: this test's whole point is exercising the tft-only decode
@@ -27,6 +27,7 @@
 
 #include "cover_image.h"
 #include "st7735.h"
+#include "tft_panel.h"
 #include "player_config.h"
 #include "spi0_bus_lock.h"
 
@@ -36,13 +37,16 @@ void spi0_bus_unlock(void) {}
 
 static uint16_t g_fb[COVER_AREA_H][COVER_AREA_W];
 
-void st7735_cover_clear(void) {
+static const tft_geom_t TEST_GEOM = {ST7735_W, ST7735_H, COVER_AREA_H};
+const tft_geom_t *tft_panel_geom(void) { return &TEST_GEOM; }
+
+void tft_cover_clear(void) {
     for (int y = 0; y < COVER_AREA_H; y++)
         for (int x = 0; x < COVER_AREA_W; x++)
             g_fb[y][x] = 0x0000;
 }
 
-void st7735_cover_blit(int x, int y, int w, int h, const uint16_t *pixels) {
+void tft_cover_blit(int x, int y, int w, int h, const uint16_t *pixels) {
     for (int row = 0; row < h; row++) {
         int dy = y + row;
         if (dy < 0 || dy >= COVER_AREA_H) continue;
@@ -139,11 +143,11 @@ int main(void) {
     CHK(g_fb[55][60] == 0xFFFF);
 
     // A path that doesn't exist at all, and path == NULL: both just blank.
-    st7735_cover_blit(0, 0, 1, 1, (const uint16_t[]){0xFFFF}); // dirty the fb first
+    tft_cover_blit(0, 0, 1, 1, (const uint16_t[]){0xFFFF}); // dirty the fb first
     cover_image_show(FIXDIR "does_not_exist.png");
     CHK(is_blank());
 
-    st7735_cover_blit(0, 0, 1, 1, (const uint16_t[]){0xFFFF});
+    tft_cover_blit(0, 0, 1, 1, (const uint16_t[]){0xFFFF});
     cover_image_show(NULL);
     CHK(is_blank());
 

@@ -12,7 +12,8 @@ scanning from, how many times a looping song's loop region repeats before
 advancing to the next file, the opt-in flash-cache mode (copy each song
 into onboard flash before playing it, freeing the SD card's SPI bus for the
 rest of that song), and which status display to drive (the default SSD1306
-OLED, or an ST7735 SPI TFT -- picking tft dynamically reserves its 3 GPIOs
+OLED, or an SPI TFT -- ST7735 (default), ILI9341 or ST7796, chosen with
+`tft_panel` -- picking tft dynamically reserves its 3 GPIOs
 in the collision checks below). tft no longer forces flash_cache on in the
 generated file as of 2026-10-06 (removed once real hardware confirmed
 display = tft + flash_cache = no is stable -- see

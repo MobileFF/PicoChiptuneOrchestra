@@ -8,9 +8,13 @@
 #include "tjpgd.h"
 #include "miniz_tinfl.h"
 #include "inflate_scratch.h"
-#include "st7735.h"
+#include "tft_panel.h"
 #include "player_config.h"
 #include "spi0_bus_lock.h"
+
+// Cover-art area size for the configured [player] tft_panel (see tft_panel.h).
+static int cover_w(void) { return tft_panel_geom()->w; }
+static int cover_h(void) { return tft_panel_geom()->cover_h; }
 
 static bool has_ext(const char *name, const char *ext) {
     size_t nlen = strlen(name), elen = strlen(ext);
@@ -25,15 +29,15 @@ bool cover_image_is_supported(const char *name) {
 // --- shared scale-to-fit math ----------------------------------------------
 //
 // Uniform integer decimation (same factor both axes, so the image is only
-// ever shrunk, never distorted) so `src_w` fits within COVER_AREA_W. Never
-// upscales (returns 1 for a source already <= COVER_AREA_W). A source
-// that's still taller than COVER_AREA_H after this -- a tall/portrait photo
-// -- is centred and silently clipped top/bottom by st7735_cover_blit()'s own
+// ever shrunk, never distorted) so `src_w` fits within cover_w(). Never
+// upscales (returns 1 for a source already <= cover_w()). A source
+// that's still taller than cover_h() after this -- a tall/portrait photo
+// -- is centred and silently clipped top/bottom by tft_cover_blit()'s own
 // bounds check, rather than shrunk further to fit height too: this matches
 // "fit to the display WIDTH" as asked for.
 
 static int fit_decimation(int src_w) {
-    int d = (src_w + COVER_AREA_W - 1) / COVER_AREA_W;
+    int d = (src_w + cover_w() - 1) / cover_w();
     return d < 1 ? 1 : d;
 }
 
@@ -62,13 +66,13 @@ static uint16_t jpeg_in(JDEC *jd, uint8_t *buf, uint16_t nbyte) {
 
 // Receives one decoded MCU rectangle at a time (RGB565, native-endian
 // uint16_t -- see third_party/tjpgd/tjpgd.h's JD_FORMAT comment) and blits
-// the kept (post-decimation) pixels straight into st7735.c's framebuffer,
+// the kept (post-decimation) pixels straight into the TFT framebuffer/panel,
 // one destination row at a time. No full-image buffer needed.
 static uint16_t jpeg_out(JDEC *jd, void *bitmap, JRECT *rect) {
     jpeg_ctx_t *ctx = (jpeg_ctx_t *)jd->device;
     const uint16_t *src = (const uint16_t *)bitmap;
     int rw = rect->right - rect->left + 1;
-    static uint16_t row[COVER_AREA_W];
+    static uint16_t row[TFT_MAX_W];
 
     for (int sy = rect->top; sy <= rect->bottom; sy++) {
         if (sy % ctx->extra != 0) continue;
@@ -81,7 +85,7 @@ static uint16_t jpeg_out(JDEC *jd, void *bitmap, JRECT *rect) {
             if ((size_t)n < sizeof(row) / sizeof(row[0]))
                 row[n++] = src[(sy - rect->top) * rw + (sx - rect->left)];
         }
-        if (n > 0) st7735_cover_blit(first_dx, dy, n, 1, row);
+        if (n > 0) tft_cover_blit(first_dx, dy, n, 1, row);
     }
     return 1; // continue decoding
 }
@@ -98,20 +102,20 @@ static bool decode_jpeg(FIL *fp) {
     if (jd_prepare(&jd, jpeg_in, work, sizeof(work), &ctx) != JDR_OK) return false;
 
     // Pick tjpgd's own coarse 1/2^N descale (N=0..3) so the pre-blit image is
-    // already close to (but not below) COVER_AREA_W wide, minimizing the
+    // already close to (but not below) cover_w() wide, minimizing the
     // extra nearest-neighbour decimation jpeg_out() still has to do to land
     // on the exact target (tjpgd only offers powers of 2, real cover art is
     // rarely a power-of-2 multiple of 128px).
     uint8_t scale = 0;
-    while (scale < 3 && (jd.width >> (scale + 1)) >= COVER_AREA_W) scale++;
+    while (scale < 3 && (jd.width >> (scale + 1)) >= cover_w()) scale++;
 
     int decoded_w = jd.width >> scale;
     int decoded_h = jd.height >> scale;
     ctx.extra = fit_decimation(decoded_w);
     int final_w = decoded_w / ctx.extra;
     int final_h = decoded_h / ctx.extra;
-    ctx.dst_x0 = (COVER_AREA_W - final_w) / 2;
-    ctx.dst_y0 = (COVER_AREA_H - final_h) / 2;
+    ctx.dst_x0 = (cover_w() - final_w) / 2;
+    ctx.dst_y0 = (cover_h() - final_h) / 2;
 
     return jd_decomp(&jd, jpeg_out, scale) == JDR_OK;
 }
@@ -294,7 +298,7 @@ static uint8_t png_palette_index(const uint8_t *row, uint32_t x, int bit_depth) 
 // type is bit_depth-8-only).
 static void png_blit_row(const uint8_t *row, uint32_t width, int bpp, int bit_depth, int dy, int extra, int dst_x0,
                           const uint8_t *palette) {
-    static uint16_t out_row[COVER_AREA_W];
+    static uint16_t out_row[TFT_MAX_W];
     int n = 0, first_dx = -1;
     for (uint32_t sx = 0; sx < width; sx += (uint32_t)extra) {
         uint8_t r, g, b;
@@ -312,7 +316,7 @@ static void png_blit_row(const uint8_t *row, uint32_t width, int bpp, int bit_de
         if (first_dx < 0) first_dx = dx;
         if ((size_t)n < sizeof(out_row) / sizeof(out_row[0])) out_row[n++] = color;
     }
-    if (n > 0) st7735_cover_blit(first_dx, dy, n, 1, out_row);
+    if (n > 0) tft_cover_blit(first_dx, dy, n, 1, out_row);
 }
 
 static bool decode_png(FIL *fp) {
@@ -395,8 +399,8 @@ static bool decode_png(FIL *fp) {
     int extra = fit_decimation((int)width);
     int final_w = (int)width / extra;
     int final_h = (int)height / extra;
-    int dst_x0 = (COVER_AREA_W - final_w) / 2;
-    int dst_y0 = (COVER_AREA_H - final_h) / 2;
+    int dst_x0 = (cover_w() - final_w) / 2;
+    int dst_y0 = (cover_h() - final_h) / 2;
 
     // Palette rows are bit-packed (1/2/4/8 bits/pixel, see
     // png_palette_index()'s comment); every other supported color type is
@@ -470,7 +474,7 @@ void cover_image_show(const char *path) {
     // this decode releases it.
     spi0_bus_lock();
 
-    st7735_cover_clear(); // always start from blank -- see this function's own header doc
+    tft_cover_clear(); // always start from blank -- see this function's own header doc
     if (!path || !path[0]) {
         spi0_bus_unlock();
         return;
@@ -487,7 +491,7 @@ void cover_image_show(const char *path) {
 
     if (!ok) {
         printf("cover image: failed to decode %s, leaving the area blank\n", path);
-        st7735_cover_clear(); // a failed decode may have blitted a partial image already
+        tft_cover_clear(); // a failed decode may have blitted a partial image already
     }
     spi0_bus_unlock();
 }

@@ -37,6 +37,7 @@ static char s_root_dir[ROOT_DIR_BUF_SZ] = ""; // "" = SD card root
 static uint8_t s_loop_count = 2; // matches main.c's previous hardcoded max_loops
 static bool s_flash_cache_enabled = false; // opt-in: see flash_disk.h
 static bool s_display_is_tft = false; // false = oled (default), true = tft
+static player_tft_panel_t s_tft_panel = PLAYER_TFT_ST7735;
 
 bool player_config_shuffle_enabled(void) { return s_shuffle_enabled; }
 int player_config_skip_button_gpio(void) { return s_skip_button_gpio; }
@@ -61,6 +62,7 @@ const char *player_config_root_dir(void) { return s_root_dir; }
 // entirely for something else); it's just no longer coupled to display.
 bool player_config_flash_cache_enabled(void) { return s_flash_cache_enabled; }
 bool player_config_display_is_tft(void) { return s_display_is_tft; }
+player_tft_panel_t player_config_tft_panel(void) { return s_tft_panel; }
 
 static int lookup_chip(const char *raw) {
     static const struct { const char *key; int id; } KEYS[] = {
@@ -207,6 +209,11 @@ int player_config_apply(const char *text) {
                 if (!strcasecmp(val, "oled")) { s_display_is_tft = false; applied++; }
                 else if (!strcasecmp(val, "tft")) { s_display_is_tft = true; applied++; }
                 else printf("config: bad value '%s' for display (oled|tft)\n", val);
+            } else if (!strcasecmp(key, "tft_panel")) {
+                if (!strcasecmp(val, "st7735")) { s_tft_panel = PLAYER_TFT_ST7735; applied++; }
+                else if (!strcasecmp(val, "ili9341")) { s_tft_panel = PLAYER_TFT_ILI9341; applied++; }
+                else if (!strcasecmp(val, "st7796")) { s_tft_panel = PLAYER_TFT_ST7796; applied++; }
+                else printf("config: bad value '%s' for tft_panel (st7735|ili9341|st7796)\n", val);
             } else {
                 printf("config: unknown key '%s' in [player], ignored\n", key);
             }

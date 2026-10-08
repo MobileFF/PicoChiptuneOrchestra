@@ -92,6 +92,7 @@ ROOT_DIR_BUF_SZ = 128              # master/src/player_config.c's ROOT_DIR_BUF_S
 DEFAULT_LOOP_COUNT = 2             # master/src/player_config.c's s_loop_count
 LOOP_COUNT_MAX = 255               # vgm_player_opts_t.max_loops is a uint8_t
 DISPLAY_CHOICES = ("oled", "tft")  # [player] display -- master/src/oled_ui.c
+TFT_PANEL_CHOICES = ("st7735", "ili9341", "st7796")  # [player] tft_panel -- master/src/player_config.h
 # GPIOs [player] display = tft reserves (master/src/oled_ui.c's TFT_CS_GPIO/
 # TFT_DC_GPIO/TFT_RST_GPIO) -- only actually reserved when display = tft, so
 # validate() adds these dynamically (same pattern as the skip button's GPIO).
@@ -218,6 +219,12 @@ def parse_ini(text):
                     notes.append(f"line {lineno}: bad value '{val}' for display (oled|tft)")
                 else:
                     settings.setdefault(PLAYER_SECTION, {})["display"] = lv
+            elif nk == "tftpanel":
+                lv = val.strip().lower()
+                if lv not in TFT_PANEL_CHOICES:
+                    notes.append(f"line {lineno}: bad value '{val}' for tft_panel (st7735|ili9341|st7796)")
+                else:
+                    settings.setdefault(PLAYER_SECTION, {})["tft_panel"] = lv
             else:
                 notes.append(f"line {lineno}: unknown key '{rawkey.strip()}' in [player], ignored")
             continue
@@ -260,6 +267,7 @@ def rows_from_settings(settings):
         }
     p = settings.get(PLAYER_SECTION, {})
     display = p.get("display", "oled")
+    tft_panel = p.get("tft_panel", "st7735")
     rows[PLAYER_SECTION] = {
         "shuffle": p.get("shuffle", False),
         "skip_button": p.get("skip_button", None),  # None -> firmware default GPIO2, no line written
@@ -276,6 +284,7 @@ def rows_from_settings(settings):
         # Mirrored here: just the file's own setting, no display coupling.
         "flash_cache": p.get("flash_cache", False),
         "display": display,
+        "tft_panel": tft_panel,
     }
     return rows
 
@@ -285,7 +294,8 @@ def default_rows():
             for chip in CHIP_ORDER}
     rows[PLAYER_SECTION] = {"shuffle": False, "skip_button": None, "preview": False,
                              "preview_seconds": None, "recursive": False, "root_dir": "",
-                             "loop_count": None, "flash_cache": False, "display": "oled"}
+                             "loop_count": None, "flash_cache": False, "display": "oled",
+                             "tft_panel": "st7735"}
     return rows
 
 
@@ -307,6 +317,8 @@ def generate_ini(rows):
         out.append("flash_cache = yes")
     if rows[PLAYER_SECTION]["display"] != "oled":
         out.append(f"display = {rows[PLAYER_SECTION]['display']}")
+    if rows[PLAYER_SECTION]["tft_panel"] != "st7735":
+        out.append(f"tft_panel = {rows[PLAYER_SECTION]['tft_panel']}")
     out.append("")
     for chip in CHIP_ORDER:
         r = rows[chip]
@@ -342,6 +354,9 @@ def validate(rows):
     reserved = dict(RESERVED_PINS)
     if skip_gpio is not None:
         reserved[skip_gpio] = "skip button"
+
+    if rows[PLAYER_SECTION]["tft_panel"] != "st7735" and rows[PLAYER_SECTION]["display"] != "tft":
+        warnings.append("tft_panel is only used when display = tft (ignored with display = oled)")
 
     if rows[PLAYER_SECTION]["display"] == "tft":
         reserved[TFT_CS_GPIO] = "TFT SPI0 CS"
@@ -444,7 +459,7 @@ def run_check(path):
     print(f"  [player]   shuffle={p['shuffle']} skip_button={skip_disp} "
           f"preview={p['preview']} preview_seconds={prevsec_disp} recursive={p['recursive']} "
           f"root_dir={root_disp} loop_count={loopcnt_disp} flash_cache={p['flash_cache']} "
-          f"display={p['display']}")
+          f"display={p['display']} tft_panel={p['tft_panel']}")
     for chip in CHIP_ORDER:
         r = rows[chip]
         gap = "default" if r["gap"] is None else r["gap"]
@@ -493,6 +508,7 @@ def run_gui(initial_path=None):
     loop_count_var = tk.StringVar(value="")      # [player] loop_count (blank = default 2)
     flash_cache_var = tk.BooleanVar(value=False) # [player] flash_cache
     display_var = tk.StringVar(value="oled")     # [player] display
+    tft_panel_var = tk.StringVar(value="st7735") # [player] tft_panel
 
     # ---- widgets ----
     pathvar = tk.StringVar(value="(new file - not saved yet)")
@@ -536,8 +552,15 @@ def run_gui(initial_path=None):
     ttk.Label(row3c, text="Status display:").pack(side="left")
     ttk.Radiobutton(row3c, text="OLED (SSD1306, I2C0)", value="oled",
                      variable=display_var).pack(side="left", padx=(4, 0))
-    ttk.Radiobutton(row3c, text="TFT (ST7735, SPI0 -- shares the SD card's bus)", value="tft",
+    ttk.Radiobutton(row3c, text="TFT (SPI0 -- shares the SD card's bus)", value="tft",
                      variable=display_var).pack(side="left", padx=(8, 0))
+    row3d = ttk.Frame(playerf)
+    row3d.pack(fill="x", pady=(4, 0))
+    ttk.Label(row3d, text="TFT panel (when Status display = TFT):").pack(side="left")
+    for label, value in (("ST7735 (128x160)", "st7735"), ("ILI9341 (240x320)", "ili9341"),
+                         ("ST7796 (320x480)", "st7796")):
+        ttk.Radiobutton(row3d, text=label, value=value,
+                         variable=tft_panel_var).pack(side="left", padx=(4, 0))
 
     row4 = ttk.Frame(playerf)
     row4.pack(fill="x", pady=(4, 0))
@@ -620,6 +643,7 @@ def run_gui(initial_path=None):
             # matching comment (removed 2026-10-06, player_config.c).
             "flash_cache": bool(flash_cache_var.get()),
             "display": display_var.get(),
+            "tft_panel": tft_panel_var.get(),
         }
         return rows
 
@@ -641,6 +665,7 @@ def run_gui(initial_path=None):
         loop_count_var.set("" if p["loop_count"] is None else str(p["loop_count"]))
         flash_cache_var.set(bool(p["flash_cache"]))
         display_var.set(p["display"])
+        tft_panel_var.set(p["tft_panel"])
 
     def do_validate(show_ok=True):
         rows = rows_from_form()
