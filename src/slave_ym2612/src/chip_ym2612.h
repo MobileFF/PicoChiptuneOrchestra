@@ -36,6 +36,12 @@ void ym2612_reset(uint8_t clock_preset);
 // seed playback rate, 16.16 bytes/output-sample, for a run's opening ~2ms).
 void ym2612_write(uint8_t port, uint8_t reg, uint8_t data);
 int16_t ym2612_render(void);
+// Raw L/R ymfm output for one sample (before ym2612_render()'s DAC-advance +
+// (L+R)>>3 mono-mix + clamp). For offline analysis only (tools/offline_render,
+// see render_ym2151.cpp's analogous hook for the pattern this follows). Like
+// ym2612_render(), this ALSO advances the DAC read position one sample --
+// call this OR ym2612_render() per output sample, never both for the same one.
+void ym2612_render_raw(int32_t *l, int32_t *r);
 // NTSC (preset 0, 7670454 Hz) vs PAL (preset 1, 7600489 Hz) Genesis --
 // about 1% apart, the same class of approximation already accepted for
 // SN76489/AY-3-8910. Unlike those chips, this one does NOT resample

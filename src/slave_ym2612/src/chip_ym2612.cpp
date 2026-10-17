@@ -158,7 +158,7 @@ extern "C" void ym2612_write(uint8_t port, uint8_t reg, uint8_t data) {
     }
 }
 
-extern "C" int16_t ym2612_render(void) {
+extern "C" void ym2612_render_raw(int32_t *l, int32_t *r) {
     // Advance the DAC read position at the checkpoint-derived rate and write
     // reg 0x2A on each new whole byte. The read index is strictly monotonic
     // (never re-plays a byte -> no click). play_pos must NOT run past the last
@@ -186,11 +186,33 @@ extern "C" int16_t ym2612_render(void) {
 
     ymfm::ym2612::output_data out;
     s_chip.generate(&out, 1);
-    // Measured range for a single loud channel is roughly +-5500 (see
-    // tools/probes/ym2612_probe.cpp); summing L+R then >>3 (average, then
-    // >>2) keeps typical passages comfortably inside audio_pwm's ~12-bit
-    // headroom while the clamp below catches rare fortissimo peaks.
-    int32_t mono = ((int32_t)out.data[0] + (int32_t)out.data[1]) >> 3;
+    *l = out.data[0];
+    *r = out.data[1];
+}
+
+extern "C" int16_t ym2612_render(void) {
+    int32_t l, r;
+    ym2612_render_raw(&l, &r);
+    // >>4 (2026-10-17: raised from >>3) -- the +-5500 "single loud
+    // channel" estimate this was originally tuned from (tools/probes/
+    // ym2612_probe.cpp) badly understates a busy real-world song: all 6 FM
+    // channels (one doubling as the Mega Drive "PCM" DAC) summing loud at
+    // once reaches well past that. Measured on a real user-reported "severe
+    // crackling" report (調査用/13 - World Map (Party of 5).vgm, via
+    // tools/offline_render/render_ym2612.cpp): raw (L+R) peaked at 28398,
+    // clamping 1.16% of ALL samples at >>3 -- not "rare fortissimo peaks" as
+    // this comment used to claim, but hard, frequent clipping, heard as
+    // exactly the reported crackle. >>4 clamped 0% of the same song's
+    // samples and dropped the offline renderer's click-jump-rate metric
+    // from 3x the no-clipping baseline back down to it -- same tuning
+    // tradeoff (headroom vs. quiet-passage quantisation) already made for
+    // YM2151's analogous >>6, see chip_ym2151.cpp and docs/design-notes.md.
+    // A RESIDUAL click rate remains in that song even at >>4 (present
+    // already in the raw, un-clipped, no-SPI-at-all offline render) --
+    // that part is the VGM's own dense FM write pattern, not this clamp;
+    // not something a shift change can fix. See design-notes.md's
+    // 2026-10-17 entry for the full investigation.
+    int32_t mono = (l + r) >> 4;
     if (mono > 2047) mono = 2047;
     if (mono < -2048) mono = -2048;
     return (int16_t)mono;

@@ -62,6 +62,42 @@ Localises grit/distortion: `_raw` clean but `_pwm10` gritty => it's our
 output scaling + 10-bit PWM, not the emulator. `_raw` itself distorted =>
 emulator core or our register feed -- then A/B against Nuked-OPM below.
 
+## render_ym2612.cpp / run_ym2612.sh  (YM2612 / OPN2, shipped ymfm core)
+
+```sh
+tools/offline_render/run_ym2612.sh "調査用/13 - World Map (Party of 5).vgm" /tmp/wm 60
+#   -> /tmp/wm_raw.wav      (L+R straight from ymfm, pre-scale)
+#      /tmp/wm_shipped.wav  (after chip_ym2612.cpp's shift + clamp = 12-bit,
+#                             exactly what the real slave board's audio_pwm sees)
+```
+
+Same idea as `render_ym2151.cpp`, for the OPN2 core -- including the Mega
+Drive "PCM" (channel-6 DAC) checkpoint protocol
+(`VGMSPI_OP_YM2612_PCM_RESET`/`DAC_START`/`DAC_SYNC`/etc.), translated to
+`chip_ym2612.cpp`'s wrapper port numbers exactly as `slave_engine.c`'s real
+dispatcher does, so this exercises the identical DAC playback logic the real
+slave runs -- just with perfect, never-dropped delivery (no SPI, no per-byte
+CS gap/burst, no inter-core FIFO). Renders at the YM2612's native rate
+(`ym2612_sample_rate_hz()` -- 53267 Hz at the NTSC clock preset). Uses
+`ym2612_render_raw()` (added to the wrapper for exactly this, same pattern as
+`ym2151_render_raw()`).
+
+Besides the usual peak/RMS/clamp-rate printout, this one also prints a simple
+click detector (count of sample-to-sample jumps bigger than 15% of that
+stem's own peak) on both stems -- a numeric proxy for "crackle" you don't
+have to listen for by ear. **A similar click rate on `_raw` as on
+`_shipped`** means the FM+DAC content/synthesis itself is the likely source
+(or the VGM's own dense register-write pattern), not our output
+scaling/clipping or anything in the real-hardware transport path; a much
+*higher* rate on `_shipped` points at clipping (`_shipped`'s clamp-rate
+printout will confirm) -- raise the shift in `chip_ym2612.cpp`'s
+`ym2612_render()` and re-render to check. Born from exactly this: a
+user-reported "severe crackling" song (`調査用/13 - World Map (Party of
+5).vgm`) turned out to be clipping 1.16% of samples at the then-current
+`>>3`, fixed by raising it to `>>4` -- see docs/design-notes.md's 2026-10-17
+entry for the full investigation (and the residual, unexplained click rate
+that remains even with clipping removed).
+
 ## render_ym2151_nuked.c / run_ym2151_nuked.sh  (reference OPM core)
 
 Same as above but synthesises with **Nuked-OPM** (cycle-accurate, the de
